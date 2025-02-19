@@ -17,68 +17,83 @@ if not TODOIST_TOKEN or not INBOX_ID:
     exit(1)
 
 # セクションを取得する関数
-def get_sections(project_id):
+def get_first_section_id(project_id):
+    """ 指定されたプロジェクトの最初のセクションのIDを取得する """
     api = TodoistAPI(TODOIST_TOKEN)
     try:
-        return api.get_sections(project_id=project_id) 
+        sections = api.get_sections(project_id=project_id)
+        if sections:
+            return sections[0].id  # 最初のセクションのIDを返す
     except Exception as e:
-        print(f"エラーが発生しました: {e}")
-        return []
+        print(f"セクション取得中にエラーが発生しました: {e}")
+    return None  # セクションがない場合は None を返す
 
 # タスクを追加する関数
 def add_task(task_name, project_id=INBOX_ID, section_id=None):
+    """ タスクを追加する。セクションが指定されていない場合、最初のセクションを選択 """
     api = TodoistAPI(TODOIST_TOKEN)
+
+    # セクションが指定されていない場合、最初のセクションを取得
+    if section_id is None:
+        section_id = get_first_section_id(project_id)
+
     try:
         task = api.add_task(content=task_name, project_id=project_id, section_id=section_id)
-        print(f"タスクが追加されました: {task.id}, タスク名: {task.content}")
+        print(f"タスクが追加されました: {task.id}, タスク名: {task.content}, セクションID: {section_id}")
     except Exception as e:
         print(f"タスクの追加中にエラーが発生しました: {e}")
+
+# タスク一覧を取得する関数
+def get_tasks_in_first_section(project_id=INBOX_ID):
+    """ 指定されたプロジェクトの最初のセクションのタスクを取得し、表示する """
+    api = TodoistAPI(TODOIST_TOKEN)
+
+    # 最初のセクションを取得
+    section_id = get_first_section_id(project_id)
+    if section_id is None:
+        print("指定されたプロジェクトにセクションがありません。タスクを取得できません。")
+        return
+
+    try:
+        tasks = api.get_tasks(project_id=project_id)
+        section_tasks = [task for task in tasks if task.section_id == section_id]
+
+        if not section_tasks:
+            print(f"セクション ID: {section_id} にはタスクがありません。")
+        else:
+            print(f"セクション ID: {section_id} のタスク一覧:")
+            for index, task in enumerate(section_tasks, start=1):
+                print(f"- {index}: {task.content}")
+
+    except Exception as e:
+        print(f"タスク取得中にエラーが発生しました: {e}")
 
 # メイン関数
 def main():
     parser = argparse.ArgumentParser(description="Todoist CLIツール")
-    
-    subparsers = parser.add_subparsers(dest="command", help="コマンドを指定してください")
-
-    # セクション一覧取得コマンド
-    section_parser = subparsers.add_parser("section", help="セクション一覧を取得")
-    section_parser.add_argument("li", action="store_true", help="セクション一覧を取得します")
-    section_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="プロジェクトID（デフォルト: Inbox）")
+    subparsers = parser.add_subparsers(dest="command")
 
     # タスク追加コマンド
     add_parser = subparsers.add_parser("add", help="タスクを追加")
     add_parser.add_argument("task_name", help="追加するタスク名")
     add_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="プロジェクトID（デフォルト: Inbox）")
-    add_parser.add_argument("-s", "--section", help="セクション名またはセクションID（未指定の場合は最初のセクションを使用）")
+    add_parser.add_argument("-s", "--section_id", help="セクションID（未指定の場合は最初のセクションを使用）")
+
+    # タスク一覧取得コマンド（todo li）
+    list_parser = subparsers.add_parser("li", help="最初のセクションのタスクを一覧表示")
+    list_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="プロジェクトID（デフォルト: Inbox）")
 
     # 引数を解析
     args = parser.parse_args()
 
-    # セクション一覧取得
-    if args.command == "section" and args.li:
-        get_sections(args.project_id)
-
     # タスク追加
-    elif args.command == "add":
-        section_id = None
-        sections = get_sections(args.project_id)  # 指定されたプロジェクトのセクション一覧を取得
+    if args.command == "add":
+        add_task(args.task_name, args.project_id, args.section_id)
 
-        # セクションが指定されていない場合は最初のセクションを使用
-        if not args.section and sections:
-            section_id = sections[0].id
-            print(f"セクションが指定されていないため、デフォルトで最初のセクション '{sections[0].name}' を使用します。")
-        elif args.section:
-            # 指定されたセクション名またはIDを確認
-            for section in sections:
-                if args.section == section.name or args.section == section.id:
-                    section_id = section.id
-                    break
-            if section_id is None:
-                print(f"指定されたセクション '{args.section}' が見つかりませんでした。セクションなしで進みます。")
+    # タスク一覧取得
+    elif args.command == "li":
+        get_tasks_in_first_section(args.project_id)
 
-        add_task(args.task_name, args.project_id, section_id)
-
-    # 無効なコマンド
     else:
         parser.print_help()
 
