@@ -4,14 +4,16 @@ import subprocess
 import datetime
 from dotenv import load_dotenv
 from todoist_api_python.api import TodoistAPI
+from pathlib import Path
 
 # .env ファイルの読み込み
 load_dotenv()
 
 # グローバル API インスタンスを作成
+SCRIPT_PATH = Path(os.path.abspath(__file__))
+REPO_PATH = SCRIPT_PATH.resolve().parent
 TODOIST_TOKEN = os.getenv("TODOIST_TOKEN")
 INBOX_ID = os.getenv("INBOX_ID")
-REPO_PATH = os.getenv("TODOIST_CLI_PATH", "./todoist-CLI")
 LAST_UPDATE_FILE = ".last_update"
 api = TodoistAPI(TODOIST_TOKEN)
 
@@ -22,7 +24,6 @@ if not TODOIST_TOKEN or not INBOX_ID:
 def check_and_update_repo():
     """ その日初めての実行時にリポジトリを更新 """
     today = datetime.date.today().isoformat()
-    
     # 前回の更新日を確認
     if os.path.exists(LAST_UPDATE_FILE):
         with open(LAST_UPDATE_FILE, "r") as f:
