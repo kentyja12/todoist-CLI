@@ -6,10 +6,10 @@ from dotenv import load_dotenv
 from todoist_api_python.api import TodoistAPI
 from pathlib import Path
 
-# .env ファイルの読み込み
+# Load .env file
 load_dotenv()
 
-# グローバル API インスタンスを作成
+# Create a global API instance
 SCRIPT_PATH = Path(os.path.abspath(__file__))
 REPO_PATH = SCRIPT_PATH.resolve().parent
 TODOIST_TOKEN = os.getenv("TODOIST_TOKEN")
@@ -18,76 +18,76 @@ LAST_UPDATE_FILE = ".last_update"
 api = TodoistAPI(TODOIST_TOKEN)
 
 if not TODOIST_TOKEN or not INBOX_ID:
-    print("エラー: .env ファイルに TODOIST_TOKEN または INBOX_ID が設定されていません。")
+    print("Error: TODOIST_TOKEN or INBOX_ID is not set in the .env file.")
     exit(1)
 
 def check_and_update_repo():
-    """ その日初めての実行時にリポジトリを更新 """
+    """ Update the repository if it is the first execution of the day """
     today = datetime.date.today().isoformat()
-    # 前回の更新日を確認
+    # Check the last update date
     if os.path.exists(LAST_UPDATE_FILE):
         with open(LAST_UPDATE_FILE, "r") as f:
             last_update = f.read().strip()
         if last_update == today:
-            return  # すでに更新済み
+            return  # Already updated
     
-    # リポジトリが存在しない場合はクローン
+    # Clone the repository if it does not exist
     if not os.path.exists(REPO_PATH):
-        print("リポジトリをクローンしています...")
+        print("Cloning the repository...")
         subprocess.run(["git", "pull"], check=True)
     else:
-        print("リポジトリの更新を確認...")
+        print("Checking for repository updates...")
         subprocess.run(["git", "-C", REPO_PATH, "pull"], check=True)
     
-    # 更新日を記録
+    # Record the update date
     with open(LAST_UPDATE_FILE, "w") as f:
         f.write(today)
 
 def get_first_section_id(project_id):
-    """ 指定されたプロジェクトの最初のセクションのIDを取得（キャッシュ利用） """
+    """ Get the first section ID of the specified project (using cache) """
     try:
         sections = api.get_sections(project_id=project_id)
         return sections[0].id if sections else None
     except Exception as e:
-        print(f"セクション取得中にエラー: {e}")
+        print(f"Error retrieving sections: {e}")
         return None
 
 def add_task(task_name, project_id=INBOX_ID):
-    """ タスクを追加（最初のセクションに追加） """
+    """ Add a task (add to the first section) """
     section_id = get_first_section_id(project_id)
     try:
         task = api.add_task(content=task_name, project_id=project_id, section_id=section_id)
-        print(f"タスク追加: {task.id}, {task.content}, セクション: {section_id}")
+        print(f"Task added: {task.id}, {task.content}, Section: {section_id}")
     except Exception as e:
-        print(f"タスク追加エラー: {e}")
+        print(f"Error adding task: {e}")
 
 def get_tasks_in_first_section(project_id=INBOX_ID):
-    """ 最初のセクションのタスクを取得し、表示（API 呼び出しを最小化） """
+    """ Retrieve and display tasks in the first section (minimizing API calls) """
     section_id = get_first_section_id(project_id)
     if section_id is None:
-        print("セクションが存在しません。")
+        print("No section exists.")
         return []
 
     try:
         tasks = [task for task in api.get_tasks(project_id=project_id) if task.section_id == section_id]
         if not tasks:
-            print(f"セクション {section_id} にタスクなし")
+            print(f"No tasks in section {section_id}")
             return []
 
-        print(f"セクション {section_id} のタスク:")
+        print(f"Tasks in section {section_id}:")
         for index, task in enumerate(tasks, start=1):
             print(f"- {index}: {task.content}")
         
         return tasks
     except Exception as e:
-        print(f"タスク取得エラー: {e}")
+        print(f"Error retrieving tasks: {e}")
         return []
 
 def complete_tasks(identifiers, project_id=INBOX_ID):
-    """ 指定された番号または名前のタスクを完了 """
+    """ Complete the specified tasks by number or name """
     tasks = get_tasks_in_first_section(project_id)
     if not tasks:
-        print("完了できるタスクがありません。")
+        print("No tasks available to complete.")
         return
     
     id_map = {str(i + 1): task for i, task in enumerate(tasks)}
@@ -102,37 +102,37 @@ def complete_tasks(identifiers, project_id=INBOX_ID):
                 api.close_task(task.id)
                 completed.append(task.content)
             except Exception as e:
-                failed.append(f"{task.content}（エラー: {e}）")
+                failed.append(f"{task.content} (Error: {e})")
         else:
-            failed.append(f"{identifier}（見つかりませんでした）")
+            failed.append(f"{identifier} (Not found)")
 
-    # 処理結果を表示
+    # Display the result of processing
     if completed:
-        print("完了したタスク:", ", ".join(completed))
+        print("Completed tasks:", ", ".join(completed))
     if failed:
-        print("完了できなかったタスク:", ", ".join(failed))
+        print("Tasks that could not be completed:", ", ".join(failed))
 
 def main():
-    check_and_update_repo()  # コマンド実行前に更新確認
+    check_and_update_repo()  # Check for updates before executing commands
     
-    parser = argparse.ArgumentParser(description="Todoist CLIツール")
+    parser = argparse.ArgumentParser(description="Todoist CLI Tool")
     subparsers = parser.add_subparsers(dest="command")
 
-    # タスク追加（todo add）
-    add_parser = subparsers.add_parser("add", help="タスクを追加")
-    add_parser.add_argument("task_name", help="追加するタスク名")
-    add_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="プロジェクトID")
+    # Add task (todo add)
+    add_parser = subparsers.add_parser("add", help="Add a task")
+    add_parser.add_argument("task_name", help="Name of the task to add")
+    add_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="Project ID")
 
-    # タスク一覧取得（todo ls）
-    list_parser = subparsers.add_parser("ls", help="最初のセクションのタスク一覧")
-    list_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="プロジェクトID")
+    # Get task list (todo ls)
+    list_parser = subparsers.add_parser("ls", help="List tasks in the first section")
+    list_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="Project ID")
 
-    # タスク完了（todo check）
-    check_parser = subparsers.add_parser("check", help="タスクを完了")
-    check_parser.add_argument("identifiers", nargs="+", help="完了するタスクの番号または名前")
-    check_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="プロジェクトID")
+    # Complete task (todo check)
+    check_parser = subparsers.add_parser("check", help="Complete a task")
+    check_parser.add_argument("identifiers", nargs="+", help="Task number or name to complete")
+    check_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="Project ID")
 
-    # 引数解析
+    # Parse arguments
     args = parser.parse_args()
 
     if args.command == "add":
