@@ -2,6 +2,7 @@ import argparse
 import os
 import subprocess
 import datetime
+import sys
 from dotenv import load_dotenv
 from todoist_api_python.api import TodoistAPI
 from pathlib import Path
@@ -115,6 +116,11 @@ def complete_tasks(identifiers, project_id=INBOX_ID):
 def main():
     check_and_update_repo()  # Check for updates before executing commands
     
+    # Alias Support
+    alias_map = {"a": "add", "c": "check"}
+    if len(sys.argv) > 1 and sys.argv[1] in alias_map:
+        sys.argv[1] = alias_map[sys.argv[1]]  # Replace abbreviated commands with formal command names
+
     parser = argparse.ArgumentParser(description="Todoist CLI Tool")
     subparsers = parser.add_subparsers(dest="command")
 
