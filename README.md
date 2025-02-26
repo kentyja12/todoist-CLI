@@ -34,6 +34,8 @@ This script is a command-line tool for managing tasks using the [Todoist API](ht
 ### Add a Task
 ```sh
 todo add "Buy groceries"
+# or
+todo a "Buy groceries"
 ```
 
 ### List Tasks in the First Section
@@ -44,6 +46,8 @@ todo ls
 ### Complete a Task by Number or Name
 ```sh
 todo check 1
+# or
+todo c 1
 ```
 
 ## License
