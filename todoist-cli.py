@@ -37,7 +37,7 @@ def check_and_update_repo():
         print("Cloning the repository...")
         subprocess.run(["git", "pull"], check=True)
     else:
-        print("Checking for repository updates...")
+        print("Checking for repository updates...",end="| ")
         subprocess.run(["git", "-C", REPO_PATH, "pull"], check=True)
     
     # Record the update date
@@ -53,14 +53,15 @@ def get_first_section_id(project_id):
         print(f"Error retrieving sections: {e}")
         return None
 
-def add_task(task_name, project_id=INBOX_ID):
-    """ Add a task (add to the first section) """
+def add_tasks(task_names, project_id=INBOX_ID):
+    """ Add multiple tasks (add to the first section) """
     section_id = get_first_section_id(project_id)
-    try:
-        task = api.add_task(content=task_name, project_id=project_id, section_id=section_id)
-        print(f"Task added: {task.id}, {task.content}, Section: {section_id}")
-    except Exception as e:
-        print(f"Error adding task: {e}")
+    for task_name in task_names:
+        try:
+            task = api.add_task(content=task_name, project_id=project_id, section_id=section_id)
+            print(f"Task added: {task.id}, {task.content}, Section: {section_id}")
+        except Exception as e:
+            print(f"Error adding task: {e}")
 
 def get_tasks_in_first_section(project_id=INBOX_ID):
     """ Retrieve and display tasks in the first section (minimizing API calls) """
@@ -125,8 +126,8 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     # Add task (todo add)
-    add_parser = subparsers.add_parser("add", help="Add a task")
-    add_parser.add_argument("task_name", help="Name of the task to add")
+    add_parser = subparsers.add_parser("add", help="Add tasks")
+    add_parser.add_argument("task_names", nargs="+", help="Names of the tasks to add")
     add_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="Project ID")
 
     # Get task list (todo ls)
@@ -142,7 +143,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "add":
-        add_task(args.task_name, args.project_id)
+        add_tasks(args.task_names, args.project_id)
     elif args.command == "ls":
         get_tasks_in_first_section(args.project_id)
     elif args.command == "check":
