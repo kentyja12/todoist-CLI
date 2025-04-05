@@ -23,29 +23,26 @@ if not TODOIST_TOKEN or not INBOX_ID:
     exit(1)
 
 def check_and_update_repo():
-    """ Update the repository if it is the first execution of the day """
+    """Update the repository if it's the first execution of the day."""
     today = datetime.date.today().isoformat()
-    # Check the last update date
     if os.path.exists(LAST_UPDATE_FILE):
         with open(LAST_UPDATE_FILE, "r") as f:
             last_update = f.read().strip()
         if last_update == today:
-            return  # Already updated
+            return
     
-    # Clone the repository if it does not exist
     if not os.path.exists(REPO_PATH):
         print("Cloning the repository...")
         subprocess.run(["git", "pull"], check=True)
     else:
-        print("Checking for repository updates...",end="| ")
+        print("Checking for repository updates...", end="| ")
         subprocess.run(["git", "-C", REPO_PATH, "pull"], check=True)
     
-    # Record the update date
     with open(LAST_UPDATE_FILE, "w") as f:
         f.write(today)
 
 def get_first_section_id(project_id):
-    """ Get the first section ID of the specified project (using cache) """
+    """Get the first section ID of the specified project."""
     try:
         sections = api.get_sections(project_id=project_id)
         return sections[0].id if sections else None
@@ -54,7 +51,7 @@ def get_first_section_id(project_id):
         return None
 
 def add_tasks(task_names, project_id=INBOX_ID):
-    """ Add multiple tasks (add to the first section) """
+    """Add multiple tasks to the first section."""
     section_id = get_first_section_id(project_id)
     for task_name in task_names:
         try:
@@ -64,7 +61,7 @@ def add_tasks(task_names, project_id=INBOX_ID):
             print(f"Error adding task: {e}")
 
 def get_tasks_in_first_section(project_id=INBOX_ID):
-    """ Retrieve and display tasks in the first section (minimizing API calls) """
+    """Retrieve and display tasks in the first section."""
     section_id = get_first_section_id(project_id)
     if section_id is None:
         print("No section exists.")
@@ -86,7 +83,7 @@ def get_tasks_in_first_section(project_id=INBOX_ID):
         return []
 
 def complete_tasks(identifiers, project_id=INBOX_ID):
-    """ Complete the specified tasks by number or name """
+    """Complete the specified tasks by number or name."""
     tasks = get_tasks_in_first_section(project_id)
     if not tasks:
         print("No tasks available to complete.")
@@ -108,38 +105,67 @@ def complete_tasks(identifiers, project_id=INBOX_ID):
         else:
             failed.append(f"{identifier} (Not found)")
 
-    # Display the result of processing
     if completed:
         print("Completed tasks:", ", ".join(completed))
     if failed:
         print("Tasks that could not be completed:", ", ".join(failed))
 
+def interactive_shell():
+    """Enter interactive shell mode to run commands."""
+    print("Todoist Interactive Mode Started (type 'exit' to quit)")
+    while True:
+        try:
+            line = input("todo> ").strip()
+            if line.lower() in ("exit", "quit"):
+                print("Exiting interactive mode.")
+                break
+            if not line:
+                continue
+            args = line.split()
+            command = args[0]
+            command_args = args[1:]
+
+            if command in ("add", "a"):
+                if not command_args:
+                    print("Please provide task names to add.")
+                    continue
+                add_tasks(command_args)
+            elif command in ("ls",):
+                get_tasks_in_first_section()
+            elif command in ("check", "c"):
+                if not command_args:
+                    print("Please specify task number or name to complete.")
+                    continue
+                complete_tasks(command_args)
+            else:
+                print(f"Unknown command: {command}")
+        except KeyboardInterrupt:
+            print("\nExiting interactive mode (Ctrl+C)")
+            break
+        except Exception as e:
+            print(f"Error occurred: {e}")
+
 def main():
-    check_and_update_repo()  # Check for updates before executing commands
-    
-    # Alias Support
+    check_and_update_repo()
+
     alias_map = {"a": "add", "c": "check"}
     if len(sys.argv) > 1 and sys.argv[1] in alias_map:
-        sys.argv[1] = alias_map[sys.argv[1]]  # Replace abbreviated commands with formal command names
+        sys.argv[1] = alias_map[sys.argv[1]]
 
     parser = argparse.ArgumentParser(description="Todoist CLI Tool")
     subparsers = parser.add_subparsers(dest="command")
 
-    # Add task (todo add)
     add_parser = subparsers.add_parser("add", help="Add tasks")
     add_parser.add_argument("task_names", nargs="+", help="Names of the tasks to add")
     add_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="Project ID")
 
-    # Get task list (todo ls)
     list_parser = subparsers.add_parser("ls", help="List tasks in the first section")
     list_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="Project ID")
 
-    # Complete task (todo check)
     check_parser = subparsers.add_parser("check", help="Complete a task")
     check_parser.add_argument("identifiers", nargs="+", help="Task number or name to complete")
     check_parser.add_argument("-p", "--project_id", default=INBOX_ID, help="Project ID")
 
-    # Parse arguments
     args = parser.parse_args()
 
     if args.command == "add":
@@ -149,7 +175,8 @@ def main():
     elif args.command == "check":
         complete_tasks(args.identifiers, args.project_id)
     else:
-        parser.print_help()
+        print("No command specified. Entering interactive mode...")
+        interactive_shell()
 
 if __name__ == "__main__":
     main()
