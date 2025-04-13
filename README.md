@@ -177,3 +177,16 @@ todo c 1
 
 ## License
 This project is licensed under the MIT License.
+---
+
+## 🛠 One-liner Setup Tips for Windows (Current Directory)
+
+If you want to install and use the `todo` command right in your current directory with a single PowerShell command, here's a ready-to-go example:
+
+```powershell
+git clone https://github.com/kentyja12/todoist-CLI.git .\todoist-CLI; cd .\todoist-CLI; python -m venv env; .\env\Scripts\Activate.ps1; pip install -r requirements.txt; echo "TODOIST_TOKEN=your_todoist_api_token`nINBOX_ID=your_inbox_project_id" > .env; echo "@echo off`r`n%CD%\env\Scripts\python.exe %CD%\todoist-cli.py %*" > todo.bat; $env:Path += ";$PWD"; .\todo.bat
+```
+
+> ⚠️ Replace `your_todoist_api_token` and `your_inbox_project_id` with your actual values.  
+> This setup makes the `todo` command available for the current PowerShell session.
+
