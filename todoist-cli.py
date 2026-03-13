@@ -3,24 +3,37 @@ import os
 import subprocess
 import datetime
 import sys
+import requests
 from dotenv import load_dotenv
-from todoist_api_python.api import TodoistAPI
 from pathlib import Path
 
 # Load .env file
 load_dotenv()
 
-# Create a global API instance
 SCRIPT_PATH = Path(os.path.abspath(__file__))
 REPO_PATH = SCRIPT_PATH.resolve().parent
 TODOIST_TOKEN = os.getenv("TODOIST_TOKEN")
 INBOX_ID = os.getenv("INBOX_ID")
 LAST_UPDATE_FILE = ".last_update"
-api = TodoistAPI(TODOIST_TOKEN)
+
+BASE_URL = "https://api.todoist.com/api/v1"
 
 if not TODOIST_TOKEN or not INBOX_ID:
     print("Error: TODOIST_TOKEN or INBOX_ID is not set in the .env file.")
     exit(1)
+
+def _headers():
+    return {"Authorization": f"Bearer {TODOIST_TOKEN}"}
+
+def _get(path, params=None):
+    r = requests.get(f"{BASE_URL}/{path}", headers=_headers(), params=params)
+    r.raise_for_status()
+    return r.json()
+
+def _post(path, json=None):
+    r = requests.post(f"{BASE_URL}/{path}", headers=_headers(), json=json)
+    r.raise_for_status()
+    return r.json() if r.content else None
 
 def check_and_update_repo():
     """Update the repository if it's the first execution of the day."""
@@ -30,67 +43,78 @@ def check_and_update_repo():
             last_update = f.read().strip()
         if last_update == today:
             return
-    
+
     if not os.path.exists(REPO_PATH):
         print("Cloning the repository...")
         subprocess.run(["git", "pull"], check=True)
     else:
         print("Checking for repository updates...", end="| ")
-        subprocess.run(["git", "-C", REPO_PATH, "pull"], check=True)
-    
+        subprocess.run(["git", "-C", str(REPO_PATH), "pull"], check=True)
+
     with open(LAST_UPDATE_FILE, "w") as f:
         f.write(today)
 
 def get_first_section_id(project_id):
     """Get the first section ID of the specified project."""
     try:
-        sections = api.get_sections(project_id=project_id)
-        return sections[0].id if sections else None
+        data = _get("sections", params={"project_id": project_id})
+        sections = data.get("results", data) if isinstance(data, dict) else data
+        return sections[0]["id"] if sections else None
     except Exception as e:
         print(f"Error retrieving sections: {e}")
         return None
 
-def add_tasks(task_names, project_id=INBOX_ID):
+def add_tasks(task_names, project_id=None):
     """Add multiple tasks to the first section."""
+    if project_id is None:
+        project_id = INBOX_ID
     section_id = get_first_section_id(project_id)
     for task_name in task_names:
         try:
-            task = api.add_task(content=task_name, project_id=project_id, section_id=section_id)
-            print(f"Task added: {task.id}, {task.content}, Section: {section_id}")
+            payload = {"content": task_name, "project_id": project_id}
+            if section_id:
+                payload["section_id"] = section_id
+            task = _post("tasks", json=payload)
+            print(f"Task added: {task['id']}, {task['content']}, Section: {section_id}")
         except Exception as e:
             print(f"Error adding task: {e}")
 
-def get_tasks_in_first_section(project_id=INBOX_ID):
+def get_tasks_in_first_section(project_id=None):
     """Retrieve and display tasks in the first section."""
+    if project_id is None:
+        project_id = INBOX_ID
     section_id = get_first_section_id(project_id)
     if section_id is None:
         print("No section exists.")
         return []
 
     try:
-        tasks = [task for task in api.get_tasks(project_id=project_id) if task.section_id == section_id]
+        data = _get("tasks", params={"project_id": project_id, "section_id": section_id})
+        tasks = data.get("results", data) if isinstance(data, dict) else data
         if not tasks:
             print(f"No tasks in section {section_id}")
             return []
 
         print(f"Tasks in section {section_id}:")
         for index, task in enumerate(tasks, start=1):
-            print(f"- {index}: {task.content}")
-        
+            print(f"- {index}: {task['content']}")
+
         return tasks
     except Exception as e:
         print(f"Error retrieving tasks: {e}")
         return []
 
-def complete_tasks(identifiers, project_id=INBOX_ID):
+def complete_tasks(identifiers, project_id=None):
     """Complete the specified tasks by number or name."""
+    if project_id is None:
+        project_id = INBOX_ID
     tasks = get_tasks_in_first_section(project_id)
     if not tasks:
         print("No tasks available to complete.")
         return
-    
+
     id_map = {str(i + 1): task for i, task in enumerate(tasks)}
-    name_map = {task.content: task for task in tasks}
+    name_map = {task["content"]: task for task in tasks}
 
     completed, failed = [], []
 
@@ -98,10 +122,10 @@ def complete_tasks(identifiers, project_id=INBOX_ID):
         task = id_map.get(identifier) or name_map.get(identifier)
         if task:
             try:
-                api.close_task(task.id)
-                completed.append(task.content)
+                _post(f"tasks/{task['id']}/close")
+                completed.append(task["content"])
             except Exception as e:
-                failed.append(f"{task.content} (Error: {e})")
+                failed.append(f"{task['content']} (Error: {e})")
         else:
             failed.append(f"{identifier} (Not found)")
 
