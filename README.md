@@ -1,6 +1,7 @@
 # Todoist CLI Tool
 
-<img width="712" height="507" alt="image" src="https://github.com/user-attachments/assets/e6b5a45d-3661-4ccd-9421-aa6cc507b1fd" />
+<img width="633" height="482" alt="image" src="https://github.com/user-attachments/assets/c58ea4dd-8ce3-4ac8-8875-42df9aebc06c" />
+
 
 ## Overview
 
