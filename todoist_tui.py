@@ -130,6 +130,16 @@ def api_delete_task(task_id: str) -> None:
     r.raise_for_status()
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _task_label(content: str, pending: bool = False) -> Text:
+    """Build a task tree node label. Pending tasks are shown dim."""
+    label = Text(f"    ○ {content}")
+    if pending:
+        label.stylize("dim")
+    return label
+
+
 # ── Custom Tree ───────────────────────────────────────────────────────────────
 
 class TaskTree(Tree):
@@ -138,8 +148,9 @@ class TaskTree(Tree):
     so it does not conflict with Enter inside modals."""
 
     class OpenTask(Message):
-        def __init__(self, node_data: dict) -> None:
+        def __init__(self, node, node_data: dict) -> None:
             super().__init__()
+            self.node = node
             self.node_data = node_data
 
     def on_key(self, event) -> None:
@@ -147,7 +158,8 @@ class TaskTree(Tree):
             node = self.cursor_node
             if node and node.data and node.data.get("type") == "task":
                 event.prevent_default()
-                self.post_message(TaskTree.OpenTask(node.data))
+                if not node.data.get("pending"):
+                    self.post_message(TaskTree.OpenTask(node, node.data))
             # For project/section nodes, delegate to Tree default (expand/collapse)
 
 
@@ -545,7 +557,7 @@ class TodoistApp(App):
             )
             for task in no_section_tasks:
                 ns_node.add_leaf(
-                    Text(f"    ○ {task['content']}"),
+                    _task_label(task["content"]),
                     data={"type": "task", "id": task["id"], "content": task["content"],
                           "project_id": project_id, "section_id": None},
                 )
@@ -563,7 +575,7 @@ class TodoistApp(App):
             )
             for task in section_tasks:
                 sec_node.add_leaf(
-                    Text(f"    ○ {task['content']}"),
+                    _task_label(task["content"]),
                     data={"type": "task", "id": task["id"], "content": task["content"],
                           "project_id": project_id, "section_id": section["id"]},
                 )
@@ -597,6 +609,7 @@ class TodoistApp(App):
 
     def on_task_tree_open_task(self, event: TaskTree.OpenTask) -> None:
         """Handles Enter on a task node (only fires when Tree is focused)."""
+        task_node = event.node
         task_data = event.node_data
 
         def on_detail_dismiss(result: dict | None) -> None:
@@ -608,51 +621,130 @@ class TodoistApp(App):
             old_content = result["old_content"]
             old_desc = result["old_description"]
             project_id = task_data["project_id"]
-            try:
-                api_update_task(task_id, new_content, new_desc)
-            except Exception as e:
-                self._set_status(f"Error: {e}")
-                return
-            self._undo_stack.append({
-                "description": f"Update task: {old_content}",
-                "undo_fn": lambda: api_update_task(task_id, old_content, old_desc),
-                "redo_fn": lambda: api_update_task(task_id, new_content, new_desc),
-                "project_id": project_id,
-            })
-            self._redo_stack.clear()
-            self._refresh_project()
+            # Optimistic update: show new label dimmed while API call is in progress
+            task_node.data["pending"] = True
+            task_node.set_label(_task_label(new_content, pending=True))
+            self._edit_task_worker(task_node, task_id, new_content, new_desc, old_content, old_desc, project_id)
 
         self.push_screen(
             TaskDetailModal(task_data["id"], task_data["content"]),
             on_detail_dismiss,
         )
 
+    @work(thread=True)
+    def _edit_task_worker(
+        self, node, task_id: str, new_content: str, new_desc: str | None,
+        old_content: str, old_desc: str | None, project_id: str,
+    ) -> None:
+        try:
+            api_update_task(task_id, new_content, new_desc)
+            self.call_from_thread(
+                self._on_edit_success, node, task_id, new_content, new_desc, old_content, old_desc, project_id
+            )
+        except Exception as e:
+            self.call_from_thread(self._on_edit_error, node, old_content, str(e))
+
+    def _on_edit_success(
+        self, node, task_id: str, new_content: str, new_desc: str | None,
+        old_content: str, old_desc: str | None, project_id: str,
+    ) -> None:
+        try:
+            node.data.update({"content": new_content, "pending": False})
+            node.set_label(_task_label(new_content))
+        except Exception:
+            pass
+        self._undo_stack.append({
+            "description": f"Update task: {old_content}",
+            "undo_fn": lambda: api_update_task(task_id, old_content, old_desc),
+            "redo_fn": lambda: api_update_task(task_id, new_content, new_desc),
+            "project_id": project_id,
+        })
+        self._redo_stack.clear()
+
+    def _on_edit_error(self, node, old_content: str, error: str) -> None:
+        try:
+            node.data["pending"] = False
+            node.set_label(_task_label(old_content))
+        except Exception:
+            pass
+        self._set_status(f"Error: {error}")
+
     def action_add_task(self) -> None:
         project_id, section_id, location = self._get_context()
         if not project_id:
             self._set_status("Select a location to add a task")
             return
+        # Capture the target section node before the modal opens
+        target_node = self._find_section_node(project_id, section_id)
 
         def on_dismiss(result: tuple[str, str | None] | None) -> None:
             if not result:
                 return
             content, description = result
-            try:
-                task = api_add_task(content, project_id, section_id, description)
-            except Exception as e:
-                self._set_status(f"Error: {e}")
-                return
-            task_id = task["id"]
-            self._undo_stack.append({
-                "description": f"Add task: {content}",
-                "undo_fn": lambda: api_delete_task(task_id),
-                "redo_fn": lambda: api_add_task(content, project_id, section_id, description),
-                "project_id": project_id,
-            })
-            self._redo_stack.clear()
-            self._refresh_project_by_id(project_id)
+            if target_node is not None:
+                # Optimistic update: add a dimmed placeholder immediately
+                placeholder = target_node.add_leaf(
+                    _task_label(content, pending=True),
+                    data={"type": "task", "id": None, "content": content,
+                          "project_id": project_id, "section_id": section_id, "pending": True},
+                )
+                self._add_task_worker(placeholder, content, description, project_id, section_id)
+            else:
+                # Target not visible; fall back to synchronous add + refresh
+                try:
+                    task = api_add_task(content, project_id, section_id, description)
+                except Exception as e:
+                    self._set_status(f"Error: {e}")
+                    return
+                task_id = task["id"]
+                self._undo_stack.append({
+                    "description": f"Add task: {content}",
+                    "undo_fn": lambda: api_delete_task(task_id),
+                    "redo_fn": lambda: api_add_task(content, project_id, section_id, description),
+                    "project_id": project_id,
+                })
+                self._redo_stack.clear()
+                self._refresh_project_by_id(project_id)
 
         self.push_screen(AddTaskModal(project_id, section_id, location), on_dismiss)
+
+    @work(thread=True)
+    def _add_task_worker(
+        self, placeholder, content: str, description: str | None,
+        project_id: str, section_id: str | None,
+    ) -> None:
+        try:
+            task = api_add_task(content, project_id, section_id, description)
+            self.call_from_thread(
+                self._on_add_success, placeholder, task, content, description, project_id, section_id
+            )
+        except Exception as e:
+            self.call_from_thread(self._on_add_error, placeholder, str(e))
+
+    def _on_add_success(
+        self, placeholder, task: dict, content: str, description: str | None,
+        project_id: str, section_id: str | None,
+    ) -> None:
+        task_id = task["id"]
+        try:
+            placeholder.data.update({"id": task_id, "pending": False})
+            placeholder.set_label(_task_label(content))
+        except Exception:
+            pass
+        self._undo_stack.append({
+            "description": f"Add task: {content}",
+            "undo_fn": lambda: api_delete_task(task_id),
+            "redo_fn": lambda: api_add_task(content, project_id, section_id, description),
+            "project_id": project_id,
+        })
+        self._redo_stack.clear()
+
+    def _on_add_error(self, placeholder, error: str) -> None:
+        try:
+            placeholder.remove()
+        except Exception:
+            pass
+        self._set_status(f"Error: {error}")
 
     def action_complete_task(self) -> None:
         tree = self.query_one("#tree", Tree)
@@ -660,14 +752,25 @@ class TodoistApp(App):
         if not node or not node.data or node.data["type"] != "task":
             self._set_status("Select a task to complete")
             return
+        if node.data.get("pending"):
+            return
         task_id = node.data["id"]
         content = node.data["content"]
         project_id = node.data["project_id"]
+        # Optimistic update: dim the node immediately
+        node.data["pending"] = True
+        node.set_label(_task_label(content, pending=True))
+        self._complete_task_worker(node, task_id, content, project_id)
+
+    @work(thread=True)
+    def _complete_task_worker(self, node, task_id: str, content: str, project_id: str) -> None:
         try:
             api_close_task(task_id)
+            self.call_from_thread(self._on_complete_success, node, task_id, content, project_id)
         except Exception as e:
-            self._set_status(f"Error: {e}")
-            return
+            self.call_from_thread(self._on_complete_error, node, content, str(e))
+
+    def _on_complete_success(self, node, task_id: str, content: str, project_id: str) -> None:
         self._undo_stack.append({
             "description": f"Complete task: {content}",
             "undo_fn": lambda: api_reopen_task(task_id),
@@ -675,10 +778,21 @@ class TodoistApp(App):
             "project_id": project_id,
         })
         self._redo_stack.clear()
-        self._refresh_project_by_id(project_id)
+        try:
+            node.remove()
+        except Exception:
+            pass
+
+    def _on_complete_error(self, node, content: str, error: str) -> None:
+        try:
+            node.data["pending"] = False
+            node.set_label(_task_label(content))
+        except Exception:
+            pass
+        self._set_status(f"Error: {error}")
 
     def action_refresh(self) -> None:
-        # 展開済みプロジェクトの ID を記録してからリフレッシュ
+        # Record expanded project IDs before refreshing
         tree = self.query_one("#tree", Tree)
         expanded_ids = {
             child.data["id"]
@@ -801,6 +915,19 @@ class TodoistApp(App):
                 return data["project_id"], data.get("section_id"), ""
             case _:
                 return None, None, ""
+
+    def _find_section_node(self, project_id: str, section_id: str | None):
+        """Return the section tree node matching project_id and section_id."""
+        tree = self.query_one("#tree", Tree)
+        for proj_node in tree.root.children:
+            if not (proj_node.data and proj_node.data.get("id") == project_id):
+                continue
+            for sec_node in proj_node.children:
+                if sec_node.data and sec_node.data.get("type") == "section":
+                    node_sid = sec_node.data.get("id")
+                    if str(node_sid or "") == str(section_id or ""):
+                        return sec_node
+        return None
 
     def _get_project_node(self):
         tree = self.query_one("#tree", Tree)
