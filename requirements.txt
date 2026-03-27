@@ -1,2 +1,4 @@
-python-dotenv
-todoist-api-python
+python-dotenv>=1.2.2
+requests>=2.33.0
+rich>=14.3.3
+textual>=8.1.1
