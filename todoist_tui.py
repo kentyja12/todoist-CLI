@@ -433,6 +433,10 @@ class TodoistApp(App):
         color: $text-muted;
         padding: 0 2;
     }
+    #status.refreshing {
+        background: $warning;
+        color: $background;
+    }
     #jump-input {
         display: none;
         height: 3;
@@ -528,7 +532,9 @@ class TodoistApp(App):
                 data={"type": "error"},
             )
             return
+        self._build_tree_content(project_node, project_id, sections, tasks)
 
+    def _build_tree_content(self, project_node, project_id: str, sections: list, tasks: list) -> None:
         no_section_tasks = [t for t in tasks if not t.get("section_id") and t.get("section_id") != 0]
         if no_section_tasks:
             ns_node = project_node.add(
@@ -673,9 +679,41 @@ class TodoistApp(App):
     def action_refresh(self) -> None:
         project_node = self._get_project_node()
         if project_node:
-            self._force_reload(project_node)
+            status = self.query_one("#status", Static)
+            status.add_class("refreshing")
+            self._set_status("🔄 更新中...")
+            self._refresh_worker(project_node, project_node.data["id"])
         else:
             self._load_projects()
+
+    @work(thread=True)
+    def _refresh_worker(self, project_node, project_id: str) -> None:
+        try:
+            sections = api_get_sections(project_id)
+            tasks = api_get_tasks(project_id)
+            self.call_from_thread(self._apply_refresh, project_node, project_id, sections, tasks, None)
+        except Exception as e:
+            self.call_from_thread(self._apply_refresh, project_node, project_id, None, None, str(e))
+
+    def _apply_refresh(
+        self,
+        project_node,
+        project_id: str,
+        sections: list | None,
+        tasks: list | None,
+        error: str | None,
+    ) -> None:
+        status = self.query_one("#status", Static)
+        status.remove_class("refreshing")
+        project_node.remove_children()
+        if error:
+            project_node.add_leaf(Text(f"  エラー: {error}", style="red bold"), data={"type": "error"})
+            self._set_status(f"エラー: {error}")
+            return
+        self._build_tree_content(project_node, project_id, sections or [], tasks or [])
+        self._set_status(
+            "プロジェクトを選択して展開  |  [a] 追加  [space] 完了  [Enter] 詳細  [r] 更新  [q] 終了"
+        )
 
     def action_undo(self) -> None:
         if not self._undo_stack:
