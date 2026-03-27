@@ -30,17 +30,17 @@ except ValueError:
     TTY = 3600
 
 
-# ── 更新チェック ──────────────────────────────────────────────────────────────
+# ── Update Check ──────────────────────────────────────────────────────────────
 
 def _needs_update() -> bool:
-    """前回の更新から TTY 秒以上経過しているか確認"""
+    """Check if TTY seconds have passed since the last update."""
     if not LAST_UPDATE_FILE.exists():
         return True
     try:
         last = float(LAST_UPDATE_FILE.read_text().strip())
         return (time.time() - last) >= TTY
     except ValueError:
-        return True  # 旧フォーマット（日付文字列）なら強制更新
+        return True  # Force update if old format (date string)
 
 
 def _write_last_update() -> None:
@@ -54,7 +54,7 @@ def _headers() -> dict:
 
 
 def _get(path: str, params: dict | None = None) -> list:
-    """ページネーションを自動的に処理して全件返す"""
+    """Fetch all items handling pagination automatically."""
     params = dict(params) if params else {}
     results: list = []
     while True:
@@ -130,11 +130,12 @@ def api_delete_task(task_id: str) -> None:
     r.raise_for_status()
 
 
-# ── カスタムTree ─────────────────────────────────────────────────────────────
+# ── Custom Tree ───────────────────────────────────────────────────────────────
 
 class TaskTree(Tree):
-    """タスクノード上で Enter を押すと OpenTask メッセージを発行するカスタム Tree。
-    App レベルの priority バインドを使わないため、モーダル内の Enter と競合しない。"""
+    """Custom Tree that posts OpenTask when Enter is pressed on a task node.
+    Uses widget-level on_key instead of App-level priority binding
+    so it does not conflict with Enter inside modals."""
 
     class OpenTask(Message):
         def __init__(self, node_data: dict) -> None:
@@ -147,17 +148,17 @@ class TaskTree(Tree):
             if node and node.data and node.data.get("type") == "task":
                 event.prevent_default()
                 self.post_message(TaskTree.OpenTask(node.data))
-            # task 以外（project/section）は Tree デフォルトの展開/折り畳みに委譲
+            # For project/section nodes, delegate to Tree default (expand/collapse)
 
 
-# ── 更新モーダル ──────────────────────────────────────────────────────────────
+# ── Update Modal ──────────────────────────────────────────────────────────────
 
 class UpdateModal(ModalScreen):
-    """git pull を実行する更新モーダル。Esc / q 以外の操作はすべて無効。"""
+    """Update modal that runs git pull. All keys except Esc / q are disabled."""
 
     BINDINGS = [
-        Binding("escape", "cancel_update", "キャンセル", show=True),
-        Binding("q", "quit_app", "終了", show=True),
+        Binding("escape", "cancel_update", "Cancel", show=True),
+        Binding("q", "quit_app", "Quit", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -195,10 +196,10 @@ class UpdateModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Container(
-            Label("🔄  リポジトリを更新中...", id="update-title"),
+            Label("🔄  Updating repository...", id="update-title"),
             LoadingIndicator(),
             Label("", id="update-status"),
-            Label("[Esc] キャンセル    [q] 終了", id="update-hint"),
+            Label("[Esc] Cancel    [q] Quit", id="update-hint"),
             id="update-box",
         )
 
@@ -218,14 +219,14 @@ class UpdateModal(ModalScreen):
             if worker.is_cancelled:
                 return
             if result.returncode == 0:
-                msg = result.stdout.strip() or "最新の状態です"
+                msg = result.stdout.strip() or "Already up to date"
                 self.app.call_from_thread(self._on_done, True, msg)
             else:
-                err = result.stderr.strip() or "不明なエラー"
+                err = result.stderr.strip() or "Unknown error"
                 self.app.call_from_thread(self._on_done, False, err)
         except subprocess.TimeoutExpired:
             if not worker.is_cancelled:
-                self.app.call_from_thread(self._on_done, False, "タイムアウト (30秒)")
+                self.app.call_from_thread(self._on_done, False, "Timeout (30s)")
         except Exception as e:
             if not worker.is_cancelled:
                 self.app.call_from_thread(self._on_done, False, str(e))
@@ -235,7 +236,7 @@ class UpdateModal(ModalScreen):
         self.query_one("#update-status", Label).update(
             f"✓  {message}" if success else f"✗  {message}"
         )
-        self.query_one("#update-hint", Label).update("[Esc] 続ける    [q] 終了")
+        self.query_one("#update-hint", Label).update("[Esc] Continue    [q] Quit")
         self.query_one(LoadingIndicator).display = False
         _result = success
 
@@ -258,10 +259,10 @@ class UpdateModal(ModalScreen):
         self.app.exit()
 
 
-# ── タスク追加モーダル ────────────────────────────────────────────────────────
+# ── Add Task Modal ────────────────────────────────────────────────────────────
 
 class AddTaskModal(ModalScreen):
-    """タスク追加モーダル"""
+    """Add Task Modal"""
 
     DEFAULT_CSS = """
     AddTaskModal {
@@ -301,12 +302,12 @@ class AddTaskModal(ModalScreen):
     def compose(self) -> ComposeResult:
         hint = f" → {self.location}" if self.location else ""
         yield Container(
-            Label(f"タスクを追加{hint}", id="dialog-title"),
-            Label("タスク名 *", classes="field-label"),
-            Input(placeholder="タスク名を入力...", id="input-name"),
-            Label("説明 (任意)", classes="field-label"),
-            Input(placeholder="説明を入力...", id="input-desc"),
-            Label("Tab で移動  /  Enter で追加  /  Esc で閉じる", id="dialog-hint"),
+            Label(f"Add Task{hint}", id="dialog-title"),
+            Label("Task Name *", classes="field-label"),
+            Input(placeholder="Enter task name...", id="input-name"),
+            Label("Description (optional)", classes="field-label"),
+            Input(placeholder="Enter description...", id="input-desc"),
+            Label("Tab to move  /  Enter to add  /  Esc to close", id="dialog-hint"),
             id="dialog",
         )
 
@@ -314,7 +315,7 @@ class AddTaskModal(ModalScreen):
         self.query_one("#input-name", Input).focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        # どちらのフィールドから Enter を押しても即追加
+        # Submit from either field
         self._submit()
 
     def _submit(self) -> None:
@@ -330,10 +331,10 @@ class AddTaskModal(ModalScreen):
             self.dismiss(None)
 
 
-# ── タスク詳細・編集モーダル ──────────────────────────────────────────────────
+# ── Task Detail / Edit Modal ──────────────────────────────────────────────────
 
 class TaskDetailModal(ModalScreen):
-    """タスク詳細の表示と編集モーダル"""
+    """Task detail view and edit modal"""
 
     DEFAULT_CSS = """
     TaskDetailModal {
@@ -372,12 +373,12 @@ class TaskDetailModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Container(
-            Label("タスクを編集", id="detail-title"),
-            Label("タスク名 *", classes="field-label"),
+            Label("Edit Task", id="detail-title"),
+            Label("Task Name *", classes="field-label"),
             Input(value=self._initial_content, id="detail-input-name"),
-            Label("説明", classes="field-label"),
-            Input(placeholder="説明を入力...", id="detail-input-desc"),
-            Label("Tab で移動  /  Enter で保存  /  Esc でキャンセル", id="detail-hint"),
+            Label("Description", classes="field-label"),
+            Input(placeholder="Enter description...", id="detail-input-desc"),
+            Label("Tab to move  /  Enter to save  /  Esc to cancel", id="detail-hint"),
             id="detail-dialog",
         )
 
@@ -413,7 +414,7 @@ class TaskDetailModal(ModalScreen):
             self.dismiss(None)
 
 
-# ── メインアプリ ──────────────────────────────────────────────────────────────
+# ── Main App ──────────────────────────────────────────────────────────────────
 
 class TodoistApp(App):
     """Todoist TUI"""
@@ -446,14 +447,14 @@ class TodoistApp(App):
     """
 
     BINDINGS = [
-        Binding("q", "quit", "終了"),
-        Binding("a", "add_task", "タスク追加"),
-        Binding("space", "complete_task", "タスク完了", show=True, priority=True),
-        Binding("r", "refresh", "更新"),
-        Binding("g", "goto_line", "行ジャンプ", show=False),
-        Binding("u", "undo", "元に戻す", show=False),
-        Binding("ctrl+r", "redo", "やり直し", show=False),
-        Binding("ctrl+w", "collapse_others", "他を折りたたむ", show=False),
+        Binding("q", "quit", "Quit"),
+        Binding("a", "add_task", "Add Task"),
+        Binding("space", "complete_task", "Complete", show=True, priority=True),
+        Binding("r", "refresh", "Refresh"),
+        Binding("g", "goto_line", "Jump", show=False),
+        Binding("u", "undo", "Undo", show=False),
+        Binding("ctrl+r", "redo", "Redo", show=False),
+        Binding("ctrl+w", "collapse_others", "Collapse Others", show=False),
     ]
 
     def __init__(self, needs_update: bool = False) -> None:
@@ -465,10 +466,10 @@ class TodoistApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield TaskTree("プロジェクト", id="tree")
-        yield Static("読み込み中...", id="status")
+        yield TaskTree("Projects", id="tree")
+        yield Static("Loading...", id="status")
         yield Input(
-            placeholder="行番号を入力  [Enter] ジャンプ  [Esc] キャンセル",
+            placeholder="Enter line number  [Enter] Jump  [Esc] Cancel",
             id="jump-input",
         )
         yield Footer()
@@ -482,17 +483,17 @@ class TodoistApp(App):
     def _after_update(self, _result) -> None:
         self._load_projects()
 
-    # ── プロジェクト読み込み ──────────────────────────────────────────────────
+    # ── Load Projects ─────────────────────────────────────────────────────────
 
     def _load_projects(self) -> None:
         tree = self.query_one("#tree", Tree)
         tree.clear()
         tree.root.expand()
-        self._set_status("読み込み中...")
+        self._set_status("Loading...")
         try:
             projects = api_get_projects()
         except Exception as e:
-            self._set_status(f"エラー: {e}")
+            self._set_status(f"Error: {e}")
             return
 
         for project in projects:
@@ -502,14 +503,14 @@ class TodoistApp(App):
                 expand=False,
             )
             node.add_leaf(
-                Text("  読み込み中...", style="dim"),
+                Text("  Loading...", style="dim"),
                 data={"type": "loading"},
             )
         self._set_status(
-            "プロジェクトを選択して展開  |  [a] 追加  [space] 完了  [Enter] 詳細  [r] 更新  [q] 終了"
+            "Expand a project  |  [a] Add  [space] Complete  [Enter] Detail  [r] Refresh  [q] Quit"
         )
 
-    # ── ノード展開イベント ────────────────────────────────────────────────────
+    # ── Node Expand Event ─────────────────────────────────────────────────────
 
     def on_tree_node_expanded(self, event: Tree.NodeExpanded) -> None:
         node = event.node
@@ -528,7 +529,7 @@ class TodoistApp(App):
             tasks = api_get_tasks(project_id)
         except Exception as e:
             project_node.add_leaf(
-                Text(f"  エラー: {e}", style="red bold"),
+                Text(f"  Error: {e}", style="red bold"),
                 data={"type": "error"},
             )
             return
@@ -538,7 +539,7 @@ class TodoistApp(App):
         no_section_tasks = [t for t in tasks if not t.get("section_id") and t.get("section_id") != 0]
         if no_section_tasks:
             ns_node = project_node.add(
-                Text("  （セクションなし）", style="dim"),
+                Text("  (No Section)", style="dim"),
                 data={"type": "section", "id": None, "name": "", "project_id": project_id},
                 expand=True,
             )
@@ -569,11 +570,11 @@ class TodoistApp(App):
 
         if not sections and not tasks:
             project_node.add_leaf(
-                Text("  タスクなし", style="dim"),
+                Text("  No tasks", style="dim"),
                 data={"type": "empty"},
             )
 
-    # ── ノード選択イベント ────────────────────────────────────────────────────
+    # ── Node Select Event ─────────────────────────────────────────────────────
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         data = event.node.data
@@ -581,21 +582,21 @@ class TodoistApp(App):
             return
         match data["type"]:
             case "project":
-                self._set_status(f"📋 {data['name']}  |  [a] タスク追加  [r] 更新  [ctrl+w] 他を折りたたむ")
+                self._set_status(f"📋 {data['name']}  |  [a] Add Task  [r] Refresh  [ctrl+w] Collapse Others")
             case "section":
-                name = data["name"] or "セクションなし"
-                self._set_status(f"📁 {name}  |  [a] タスク追加  [r] 更新")
+                name = data["name"] or "No Section"
+                self._set_status(f"📁 {name}  |  [a] Add Task  [r] Refresh")
             case "task":
                 self._set_status(
-                    f"○ {data['content']}  |  [Enter] 詳細/編集  [space] 完了  [a] タスク追加"
+                    f"○ {data['content']}  |  [Enter] Detail/Edit  [space] Complete  [a] Add Task"
                 )
             case _:
                 self._set_status("")
 
-    # ── アクション ────────────────────────────────────────────────────────────
+    # ── Actions ───────────────────────────────────────────────────────────────
 
     def on_task_tree_open_task(self, event: TaskTree.OpenTask) -> None:
-        """TaskTree からの Enter イベント（タスクノード選択時のみ発火）"""
+        """Handles Enter on a task node (only fires when Tree is focused)."""
         task_data = event.node_data
 
         def on_detail_dismiss(result: dict | None) -> None:
@@ -610,10 +611,10 @@ class TodoistApp(App):
             try:
                 api_update_task(task_id, new_content, new_desc)
             except Exception as e:
-                self._set_status(f"エラー: {e}")
+                self._set_status(f"Error: {e}")
                 return
             self._undo_stack.append({
-                "description": f"タスク更新: {old_content}",
+                "description": f"Update task: {old_content}",
                 "undo_fn": lambda: api_update_task(task_id, old_content, old_desc),
                 "redo_fn": lambda: api_update_task(task_id, new_content, new_desc),
                 "project_id": project_id,
@@ -629,7 +630,7 @@ class TodoistApp(App):
     def action_add_task(self) -> None:
         project_id, section_id, location = self._get_context()
         if not project_id:
-            self._set_status("タスクを追加する場所を選択してください")
+            self._set_status("Select a location to add a task")
             return
 
         def on_dismiss(result: tuple[str, str | None] | None) -> None:
@@ -639,11 +640,11 @@ class TodoistApp(App):
             try:
                 task = api_add_task(content, project_id, section_id, description)
             except Exception as e:
-                self._set_status(f"エラー: {e}")
+                self._set_status(f"Error: {e}")
                 return
             task_id = task["id"]
             self._undo_stack.append({
-                "description": f"タスク追加: {content}",
+                "description": f"Add task: {content}",
                 "undo_fn": lambda: api_delete_task(task_id),
                 "redo_fn": lambda: api_add_task(content, project_id, section_id, description),
                 "project_id": project_id,
@@ -657,7 +658,7 @@ class TodoistApp(App):
         tree = self.query_one("#tree", Tree)
         node = tree.cursor_node
         if not node or not node.data or node.data["type"] != "task":
-            self._set_status("完了にするタスクを選択してください")
+            self._set_status("Select a task to complete")
             return
         task_id = node.data["id"]
         content = node.data["content"]
@@ -665,10 +666,10 @@ class TodoistApp(App):
         try:
             api_close_task(task_id)
         except Exception as e:
-            self._set_status(f"エラー: {e}")
+            self._set_status(f"Error: {e}")
             return
         self._undo_stack.append({
-            "description": f"タスク完了: {content}",
+            "description": f"Complete task: {content}",
             "undo_fn": lambda: api_reopen_task(task_id),
             "redo_fn": lambda: api_close_task(task_id),
             "project_id": project_id,
@@ -681,7 +682,7 @@ class TodoistApp(App):
         if project_node:
             status = self.query_one("#status", Static)
             status.add_class("refreshing")
-            self._set_status("🔄 更新中...")
+            self._set_status("🔄 Refreshing...")
             self._refresh_worker(project_node, project_node.data["id"])
         else:
             self._load_projects()
@@ -707,55 +708,54 @@ class TodoistApp(App):
         status.remove_class("refreshing")
         project_node.remove_children()
         if error:
-            project_node.add_leaf(Text(f"  エラー: {error}", style="red bold"), data={"type": "error"})
-            self._set_status(f"エラー: {error}")
+            project_node.add_leaf(Text(f"  Error: {error}", style="red bold"), data={"type": "error"})
+            self._set_status(f"Error: {error}")
             return
         self._build_tree_content(project_node, project_id, sections or [], tasks or [])
         self._set_status(
-            "プロジェクトを選択して展開  |  [a] 追加  [space] 完了  [Enter] 詳細  [r] 更新  [q] 終了"
+            "Expand a project  |  [a] Add  [space] Complete  [Enter] Detail  [r] Refresh  [q] Quit"
         )
 
     def action_undo(self) -> None:
         if not self._undo_stack:
-            self._set_status("元に戻す操作がありません")
+            self._set_status("Nothing to undo")
             return
         entry = self._undo_stack.pop()
         try:
             entry["undo_fn"]()
         except Exception as e:
-            self._set_status(f"元に戻す失敗: {e}")
+            self._set_status(f"Undo failed: {e}")
             return
         self._redo_stack.append(entry)
-        self._set_status(f"元に戻しました: {entry['description']}")
+        self._set_status(f"Undone: {entry['description']}")
         self._refresh_project_by_id(entry["project_id"])
 
     def action_redo(self) -> None:
         if not self._redo_stack:
-            self._set_status("やり直す操作がありません")
+            self._set_status("Nothing to redo")
             return
         entry = self._redo_stack.pop()
         try:
             entry["redo_fn"]()
         except Exception as e:
-            self._set_status(f"やり直し失敗: {e}")
+            self._set_status(f"Redo failed: {e}")
             return
         self._undo_stack.append(entry)
-        self._set_status(f"やり直しました: {entry['description']}")
+        self._set_status(f"Redone: {entry['description']}")
         self._refresh_project_by_id(entry["project_id"])
 
     def action_collapse_others(self) -> None:
-        """現在いるセクション以外の兄弟セクションを折りたたむ"""
-        # カーソルからセクションノードを辿る
+        """Collapse sibling sections except the current one."""
         tree = self.query_one("#tree", Tree)
         node = tree.cursor_node
         if not node:
-            self._set_status("セクションが選択されていません")
+            self._set_status("No section selected")
             return
         current = node
         while current and current.data and current.data.get("type") != "section":
             current = current.parent
         if not current or not current.data or current.data.get("type") != "section":
-            self._set_status("セクションが選択されていません")
+            self._set_status("No section selected")
             return
         section_node = current
         project_node = section_node.parent
@@ -765,7 +765,7 @@ class TodoistApp(App):
             if child is not section_node:
                 child.collapse()
 
-    # ── ヘルパー ─────────────────────────────────────────────────────────────
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _set_status(self, text: str) -> None:
         self.query_one("#status", Static).update(text)
@@ -780,7 +780,7 @@ class TodoistApp(App):
             case "project":
                 return data["id"], None, data["name"]
             case "section":
-                return data["project_id"], data["id"], data["name"] or "セクションなし"
+                return data["project_id"], data["id"], data["name"] or "No Section"
             case "task":
                 return data["project_id"], data.get("section_id"), ""
             case _:
@@ -801,7 +801,7 @@ class TodoistApp(App):
     def _force_reload(self, project_node) -> None:
         project_node.remove_children()
         project_node.add_leaf(
-            Text("  読み込み中...", style="dim"),
+            Text("  Loading...", style="dim"),
             data={"type": "loading"},
         )
         self._load_project_content(project_node, project_node.data["id"])
@@ -812,7 +812,7 @@ class TodoistApp(App):
             self._force_reload(project_node)
 
     def _refresh_project_by_id(self, project_id: str) -> None:
-        """undo/redo 後、カーソル位置に関係なく対象プロジェクトを更新"""
+        """Refresh the target project by ID regardless of cursor position."""
         tree = self.query_one("#tree", Tree)
         for child in tree.root.children:
             if child.data and child.data.get("id") == project_id:
@@ -820,10 +820,10 @@ class TodoistApp(App):
                 return
         self._refresh_project()
 
-    # ── 行ジャンプ ────────────────────────────────────────────────────────────
+    # ── Line Jump ─────────────────────────────────────────────────────────────
 
     def _get_visible_nodes(self) -> list:
-        """展開済みの全可視ノード（loading/error/empty を除く）を表示順で返す"""
+        """Return all expanded visible nodes (excluding loading/error/empty) in display order."""
         tree = self.query_one("#tree", Tree)
         nodes = []
 
@@ -839,7 +839,7 @@ class TodoistApp(App):
         return nodes
 
     def action_goto_line(self) -> None:
-        """g キー: 行番号を各ノードに表示してジャンプ入力を開く"""
+        """g key: show line numbers on all visible nodes and open the jump input."""
         nodes = self._get_visible_nodes()
         if not nodes:
             return
@@ -860,7 +860,7 @@ class TodoistApp(App):
         jump_input.focus()
 
     def _exit_jump_mode(self, line_num: int | None) -> None:
-        """ラベルを元に戻し、指定行があればカーソルを移動する"""
+        """Restore labels and move cursor to the specified line if given."""
         nodes_in_order = [node for node, _ in self._jump_originals]
         for node, original_label in self._jump_originals:
             node.set_label(original_label)
@@ -892,7 +892,7 @@ class TodoistApp(App):
             self._exit_jump_mode(None)
 
 
-# ── エントリポイント ──────────────────────────────────────────────────────────
+# ── Entry Point ───────────────────────────────────────────────────────────────
 
 def run_tui() -> None:
     needs_update = _needs_update()
