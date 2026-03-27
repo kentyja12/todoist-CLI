@@ -678,40 +678,56 @@ class TodoistApp(App):
         self._refresh_project_by_id(project_id)
 
     def action_refresh(self) -> None:
-        project_node = self._get_project_node()
-        if project_node:
-            status = self.query_one("#status", Static)
-            status.add_class("refreshing")
-            self._set_status("🔄 Refreshing...")
-            self._refresh_worker(project_node, project_node.data["id"])
-        else:
-            self._load_projects()
+        # 展開済みプロジェクトの ID を記録してからリフレッシュ
+        tree = self.query_one("#tree", Tree)
+        expanded_ids = {
+            child.data["id"]
+            for child in tree.root.children
+            if child.data and child.data.get("type") == "project" and child.is_expanded
+        }
+        status = self.query_one("#status", Static)
+        status.add_class("refreshing")
+        self._set_status("🔄 Refreshing...")
+        self._full_refresh_worker(expanded_ids)
 
     @work(thread=True)
-    def _refresh_worker(self, project_node, project_id: str) -> None:
+    def _full_refresh_worker(self, expanded_ids: set) -> None:
         try:
-            sections = api_get_sections(project_id)
-            tasks = api_get_tasks(project_id)
-            self.call_from_thread(self._apply_refresh, project_node, project_id, sections, tasks, None)
+            projects = api_get_projects()
+            project_data: dict = {}
+            for pid in expanded_ids:
+                project_data[pid] = (api_get_sections(pid), api_get_tasks(pid))
+            self.call_from_thread(self._apply_full_refresh, projects, project_data, None)
         except Exception as e:
-            self.call_from_thread(self._apply_refresh, project_node, project_id, None, None, str(e))
+            self.call_from_thread(self._apply_full_refresh, None, {}, str(e))
 
-    def _apply_refresh(
+    def _apply_full_refresh(
         self,
-        project_node,
-        project_id: str,
-        sections: list | None,
-        tasks: list | None,
+        projects: list | None,
+        project_data: dict,
         error: str | None,
     ) -> None:
         status = self.query_one("#status", Static)
         status.remove_class("refreshing")
-        project_node.remove_children()
         if error:
-            project_node.add_leaf(Text(f"  Error: {error}", style="red bold"), data={"type": "error"})
             self._set_status(f"Error: {error}")
             return
-        self._build_tree_content(project_node, project_id, sections or [], tasks or [])
+        tree = self.query_one("#tree", Tree)
+        tree.clear()
+        tree.root.expand()
+        for project in (projects or []):
+            pid = project["id"]
+            node = tree.root.add(
+                Text(f"📋 {project['name']}"),
+                data={"type": "project", "id": pid, "name": project["name"]},
+                expand=False,
+            )
+            if pid in project_data:
+                sections, tasks = project_data[pid]
+                self._build_tree_content(node, pid, sections, tasks)
+                node.expand()
+            else:
+                node.add_leaf(Text("  Loading...", style="dim"), data={"type": "loading"})
         self._set_status(
             "Expand a project  |  [a] Add  [space] Complete  [Enter] Detail  [r] Refresh  [q] Quit"
         )
