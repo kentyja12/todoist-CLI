@@ -1,5 +1,7 @@
 # Todoist CLI Tool
 
+<img width="712" height="507" alt="image" src="https://github.com/user-attachments/assets/e6b5a45d-3661-4ccd-9421-aa6cc507b1fd" />
+
 ## Overview
 `todo` コマンドで起動するターミナル UI (TUI) で Todoist を操作するツールです。
 プロジェクト → セクション → タスクをツリー形式で表示し、キーボードだけで快適に管理できます。
