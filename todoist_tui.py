@@ -10,11 +10,10 @@ from dotenv import load_dotenv
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
-from textual.message import Message
 from textual.binding import Binding
 from textual.containers import Container
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Input, Label, LoadingIndicator, Static, Tree
+from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, LoadingIndicator, Static
 from textual.worker import get_current_worker
 
 load_dotenv()
@@ -46,7 +45,7 @@ def _write_last_update() -> None:
     LAST_UPDATE_FILE.write_text(str(time.time()))
 
 
-# ── API ──────────────────────────────────────────────────────────────────────
+# ── API ───────────────────────────────────────────────────────────────────────
 
 def _headers() -> dict:
     return {"Authorization": f"Bearer {TOKEN}"}
@@ -142,41 +141,28 @@ def api_move_task(task_id: str, section_id: str | None, project_id: str | None =
     return r.json() if r.content else {}
 
 
-# ── Label helpers ─────────────────────────────────────────────────────────────
+# ── Row rendering ─────────────────────────────────────────────────────────────
 
-def _clean_task_label(content: str) -> Text:
-    """Base label for a task node (no line number, no state styling)."""
-    return Text(f"    ○ {content}")
-
-
-def _build_displayed_label(base: Text | str, line_num: int,
-                            pending: bool = False, moving: bool = False) -> Text:
+def _render_row(node: dict, line_num: int) -> Text:
+    """Render a list row with line number at the far left."""
     num = Text(f"{line_num:>3}│", style="dim cyan")
-    content = base.copy() if isinstance(base, Text) else Text(str(base))
-    if moving:
-        content.stylize("bold yellow")
-    elif pending:
-        content.stylize("dim")
-    return Text.assemble(num, content)
-
-
-# ── Custom Tree ───────────────────────────────────────────────────────────────
-
-class TaskTree(Tree):
-    """Posts TaskActivated on Enter for task nodes; app decides what to do."""
-
-    class TaskActivated(Message):
-        def __init__(self, node, node_data: dict) -> None:
-            super().__init__()
-            self.node = node
-            self.node_data = node_data
-
-    def on_key(self, event) -> None:
-        if event.key == "enter":
-            node = self.cursor_node
-            if node and node.data and node.data.get("type") == "task":
-                event.prevent_default()
-                self.post_message(TaskTree.TaskActivated(node, node.data))
+    ntype = node.get("type")
+    if ntype == "project":
+        icon = "▼ " if node.get("expanded") else "▶ "
+        c = Text(f" {icon}📋 {node['name']}")
+    elif ntype == "section":
+        icon = "▼ " if node.get("expanded", True) else "▶ "
+        name = node.get("name") or "No Section"
+        c = Text(f"   {icon}📁 {name}")
+    elif ntype == "task":
+        c = Text(f"       ○ {node['content']}")
+        if node.get("moving"):
+            c.stylize("bold yellow")
+        elif node.get("pending"):
+            c.stylize("dim")
+    else:
+        return Text("")
+    return Text.assemble(num, c)
 
 
 # ── Update Modal ──────────────────────────────────────────────────────────────
@@ -388,11 +374,15 @@ class TodoistApp(App):
     TITLE = "Todoist"
 
     CSS = """
-    Tree {
+    ListView {
         width: 100%;
         height: 1fr;
         scrollbar-size: 1 1;
-        padding: 0 1;
+        padding: 0;
+    }
+    ListView > ListItem {
+        padding: 0;
+        height: 1;
     }
     #status {
         height: 1;
@@ -432,12 +422,13 @@ class TodoistApp(App):
         self._undo_stack: list[dict] = []
         self._redo_stack: list[dict] = []
         self._mode: str = "normal"
-        self._move_source_node = None
         self._move_source_data: dict = {}
+        self._projects_data: list[dict] = []
+        self._flat_nodes: list[dict] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield TaskTree("Projects", id="tree")
+        yield ListView(id="list")
         yield Static("Loading...", id="status")
         yield Static("NORMAL", id="mode-indicator")
         yield Input(placeholder="command (e.g. 5g  mv)", id="colon-input")
@@ -452,13 +443,63 @@ class TodoistApp(App):
     def _after_update(self, _result) -> None:
         self._load_projects()
 
+    def _lv(self) -> ListView:
+        return self.query_one("#list", ListView)
+
+    def _get_current_node(self) -> dict | None:
+        idx = self._lv().index
+        if idx is None or idx >= len(self._flat_nodes):
+            return None
+        return self._flat_nodes[idx]
+
+    def _rebuild_list(self) -> None:
+        """Flatten _projects_data into _flat_nodes and repopulate ListView."""
+        lv = self._lv()
+        old_idx = lv.index
+
+        self._flat_nodes = []
+        items: list[ListItem] = []
+
+        for proj in self._projects_data:
+            self._flat_nodes.append(proj)
+            items.append(ListItem(Label(_render_row(proj, len(self._flat_nodes)))))
+
+            if not proj.get("expanded"):
+                continue
+
+            if not proj.get("loaded"):
+                placeholder: dict = {"type": "_loading"}
+                self._flat_nodes.append(placeholder)
+                items.append(ListItem(Label(Text("      Loading...", style="dim"))))
+                continue
+
+            for sec in proj.get("sections", []):
+                self._flat_nodes.append(sec)
+                items.append(ListItem(Label(_render_row(sec, len(self._flat_nodes)))))
+
+                if not sec.get("expanded", True):
+                    continue
+
+                for task in sec.get("tasks", []):
+                    self._flat_nodes.append(task)
+                    items.append(ListItem(Label(_render_row(task, len(self._flat_nodes)))))
+
+        lv.clear()
+        for item in items:
+            lv.append(item)
+
+        if old_idx is not None and old_idx < len(self._flat_nodes):
+            lv.index = old_idx
+        elif self._flat_nodes:
+            lv.index = 0
+
     # ── Mode management ───────────────────────────────────────────────────────
 
     def _enter_normal_mode(self) -> None:
         self._mode = "normal"
         colon_input = self.query_one("#colon-input", Input)
         colon_input.display = False
-        self.query_one("#tree", Tree).focus()
+        self._lv().focus()
         self._update_mode_indicator()
 
     def _enter_command_mode(self) -> None:
@@ -491,7 +532,6 @@ class TodoistApp(App):
     # ── Global key handling ───────────────────────────────────────────────────
 
     def action_handle_escape(self) -> None:
-        # Skip if a modal is on top (modals handle their own Esc)
         if len(self.screen_stack) > 1:
             return
         match self._mode:
@@ -514,13 +554,11 @@ class TodoistApp(App):
             self._do_complete_task()
 
     def on_key(self, event) -> None:
-        # Skip if modal is open
         if len(self.screen_stack) > 1:
             return
 
         colon_input = self.query_one("#colon-input", Input)
 
-        # When colon input is visible, only intercept Esc
         if colon_input.display:
             if event.key == "escape":
                 event.prevent_default()
@@ -528,17 +566,15 @@ class TodoistApp(App):
                 self._restore_default_status()
             return
 
-        tree = self.query_one("#tree", Tree)
+        lv = self._lv()
 
-        # j/k navigation works in all non-colon modes
         if event.key == "j":
-            tree.action_cursor_down()
+            lv.action_cursor_down()
             return
         if event.key == "k":
-            tree.action_cursor_up()
+            lv.action_cursor_up()
             return
 
-        # Command mode key dispatch
         if self._mode == "command":
             match event.key:
                 case "a":
@@ -553,7 +589,6 @@ class TodoistApp(App):
                 case "colon":
                     self._enter_colon_mode()
                 case _:
-                    # Any other key exits command mode silently
                     if event.key != "escape":
                         self._enter_normal_mode()
                         self._restore_default_status()
@@ -568,7 +603,6 @@ class TodoistApp(App):
         if not cmd:
             self._restore_default_status()
             return
-        # :<n>g → jump to line
         if cmd.endswith("g"):
             try:
                 line_num = int(cmd[:-1])
@@ -576,26 +610,74 @@ class TodoistApp(App):
             except ValueError:
                 self._set_status(f"Invalid command: {cmd}")
             return
-        # :mv → move mode
         if cmd == "mv":
             self._start_move_mode()
             return
         self._set_status(f"Unknown command: :{cmd}")
 
     def _jump_to_line(self, line_num: int) -> None:
-        nodes = self._get_visible_nodes()
-        if 1 <= line_num <= len(nodes):
-            tree = self.query_one("#tree", Tree)
-            tree.move_cursor(nodes[line_num - 1])
+        total = len(self._flat_nodes)
+        if 1 <= line_num <= total:
+            self._lv().index = line_num - 1
         else:
-            self._set_status(f"Line {line_num} out of range (1–{len(nodes)})")
+            self._set_status(f"Line {line_num} out of range (1–{total})")
+
+    # ── List events ───────────────────────────────────────────────────────────
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Enter on a list item — expand/collapse or move."""
+        if len(self.screen_stack) > 1:
+            return
+        node = self._get_current_node()
+        if not node:
+            return
+        ntype = node.get("type")
+        if ntype == "project":
+            self._toggle_project(node)
+        elif ntype == "section":
+            node["expanded"] = not node.get("expanded", True)
+            self._rebuild_list()
+        elif ntype == "task":
+            if self._mode == "move":
+                self._execute_move(node)
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Update status bar when cursor moves."""
+        if self._mode != "normal":
+            return
+        node = self._get_current_node()
+        if not node:
+            return
+        match node.get("type"):
+            case "project":
+                self._set_status(
+                    f"📋 {node['name']}  |  [Esc] command mode  [r] refresh  [ctrl+w] collapse"
+                )
+            case "section":
+                name = node.get("name") or "No Section"
+                self._set_status(f"📁 {name}  |  [Esc] command mode")
+            case "task":
+                self._set_status(
+                    f"○ {node['content']}  |  [Esc→e] edit  [Esc→Space] complete  [Esc→:mv] move"
+                )
+            case _:
+                self._restore_default_status()
+
+    def _toggle_project(self, proj: dict) -> None:
+        if proj.get("expanded"):
+            proj["expanded"] = False
+            self._rebuild_list()
+        else:
+            proj["expanded"] = True
+            if not proj.get("loaded"):
+                self._rebuild_list()
+                self._load_project_content(proj)
+            else:
+                self._rebuild_list()
 
     # ── Load Projects ─────────────────────────────────────────────────────────
 
     def _load_projects(self) -> None:
-        tree = self.query_one("#tree", Tree)
-        tree.clear()
-        tree.root.expand()
         self._set_status("Loading...")
         try:
             projects = api_get_projects()
@@ -603,130 +685,62 @@ class TodoistApp(App):
             self._set_status(f"Error: {e}")
             return
 
-        for project in projects:
-            base = Text(f"📋 {project['name']}")
-            node = tree.root.add(
-                base,
-                data={"type": "project", "id": project["id"], "name": project["name"],
-                      "base_label": base.copy()},
-                expand=False,
-            )
-            node.add_leaf(
-                Text("  Loading...", style="dim"),
-                data={"type": "loading"},
-            )
-        self._renumber_nodes()
+        self._projects_data = [
+            {"type": "project", "id": p["id"], "name": p["name"],
+             "expanded": False, "loaded": False, "sections": []}
+            for p in projects
+        ]
+        self._rebuild_list()
         self._restore_default_status()
 
-    # ── Node Expand / Collapse Events ─────────────────────────────────────────
-
-    def on_tree_node_expanded(self, event: Tree.NodeExpanded) -> None:
-        node = event.node
-        data = node.data
-        if not data or data["type"] != "project":
-            return
-        children = list(node.children)
-        if children and children[0].data and children[0].data.get("type") != "loading":
-            self._renumber_nodes()
-            return
-        self._load_project_content(node, data["id"])
-
-    def on_tree_node_collapsed(self, event: Tree.NodeCollapsed) -> None:
-        self._renumber_nodes()
-
-    def _load_project_content(self, project_node, project_id: str) -> None:
-        project_node.remove_children()
+    def _load_project_content(self, proj: dict) -> None:
+        """Fetch and populate project content, then rebuild list."""
         try:
-            sections = api_get_sections(project_id)
-            tasks = api_get_tasks(project_id)
+            sections = api_get_sections(proj["id"])
+            tasks = api_get_tasks(proj["id"])
         except Exception as e:
-            project_node.add_leaf(
-                Text(f"  Error: {e}", style="red bold"),
-                data={"type": "error"},
-            )
-            self._renumber_nodes()
+            self._set_status(f"Error loading {proj['name']}: {e}")
+            proj["loaded"] = True
+            self._rebuild_list()
             return
-        self._build_tree_content(project_node, project_id, sections, tasks)
+        self._populate_project(proj, sections, tasks)
+        self._rebuild_list()
 
-    def _build_tree_content(self, project_node, project_id: str,
-                             sections: list, tasks: list) -> None:
+    def _populate_project(self, proj: dict, sections: list, tasks: list) -> None:
+        """Populate proj['sections'] from API data. Does NOT rebuild list."""
+        project_id = proj["id"]
+        result_sections: list[dict] = []
+
         no_section_tasks = [t for t in tasks
                             if not t.get("section_id") and t.get("section_id") != 0]
         if no_section_tasks:
-            ns_base = Text("  (No Section)", style="dim")
-            ns_node = project_node.add(
-                ns_base,
-                data={"type": "section", "id": None, "name": "", "project_id": project_id,
-                      "base_label": ns_base.copy()},
-                expand=True,
-            )
-            for task in no_section_tasks:
-                base = _clean_task_label(task["content"])
-                ns_node.add_leaf(
-                    base,
-                    data={"type": "task", "id": task["id"], "content": task["content"],
-                          "project_id": project_id, "section_id": None,
-                          "order": task.get("order", 0), "base_label": base.copy()},
-                )
+            result_sections.append({
+                "type": "section", "id": None, "name": "", "project_id": project_id,
+                "expanded": True,
+                "tasks": [
+                    {"type": "task", "id": t["id"], "content": t["content"],
+                     "project_id": project_id, "section_id": None,
+                     "order": t.get("order", 0), "pending": False, "moving": False}
+                    for t in no_section_tasks
+                ],
+            })
 
-        for section in sections:
+        for sec in sections:
             section_tasks = [t for t in tasks
-                             if str(t.get("section_id", "")) == str(section["id"])]
-            sec_base = Text(f"  📁 {section['name']}")
-            if section_tasks:
-                sec_base.append(f"  {len(section_tasks)}", style="dim")
-            sec_node = project_node.add(
-                sec_base,
-                data={"type": "section", "id": section["id"], "name": section["name"],
-                      "project_id": project_id, "base_label": sec_base.copy()},
-                expand=True,
-            )
-            for task in section_tasks:
-                base = _clean_task_label(task["content"])
-                sec_node.add_leaf(
-                    base,
-                    data={"type": "task", "id": task["id"], "content": task["content"],
-                          "project_id": project_id, "section_id": section["id"],
-                          "order": task.get("order", 0), "base_label": base.copy()},
-                )
+                             if str(t.get("section_id", "")) == str(sec["id"])]
+            result_sections.append({
+                "type": "section", "id": sec["id"], "name": sec["name"],
+                "project_id": project_id, "expanded": True,
+                "tasks": [
+                    {"type": "task", "id": t["id"], "content": t["content"],
+                     "project_id": project_id, "section_id": sec["id"],
+                     "order": t.get("order", 0), "pending": False, "moving": False}
+                    for t in section_tasks
+                ],
+            })
 
-        if not sections and not tasks:
-            project_node.add_leaf(
-                Text("  No tasks", style="dim"),
-                data={"type": "empty"},
-            )
-
-        self._renumber_nodes()
-
-    # ── Node Select Event ─────────────────────────────────────────────────────
-
-    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
-        data = event.node.data
-        if not data:
-            return
-        if self._mode != "normal":
-            return
-        match data["type"]:
-            case "project":
-                self._set_status(
-                    f"📋 {data['name']}  |  [Esc] command mode  [r] refresh  [ctrl+w] collapse"
-                )
-            case "section":
-                name = data["name"] or "No Section"
-                self._set_status(f"📁 {name}  |  [Esc] command mode")
-            case "task":
-                self._set_status(
-                    f"○ {data['content']}  |  [Esc→e] edit  [Esc→Space] complete  [Esc→:mv] move"
-                )
-            case _:
-                self._restore_default_status()
-
-    # ── TaskActivated (Enter on task node) ────────────────────────────────────
-
-    def on_task_tree_task_activated(self, event: TaskTree.TaskActivated) -> None:
-        if self._mode == "move":
-            self._execute_move(event.node, event.node_data)
-        # In other modes, Enter on a task does nothing (use Esc→e to edit)
+        proj["sections"] = result_sections
+        proj["loaded"] = True
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -735,22 +749,21 @@ class TodoistApp(App):
         if not project_id:
             self._set_status("Select a location to add a task")
             return
-        target_node = self._find_section_node(project_id, section_id)
+        sec_data = self._find_section_in_data(project_id, section_id)
 
         def on_dismiss(result: tuple[str, str | None] | None) -> None:
             if not result:
                 return
             content, description = result
-            if target_node is not None:
-                base = _clean_task_label(content)
-                placeholder = target_node.add_leaf(
-                    base,
-                    data={"type": "task", "id": None, "content": content,
-                          "project_id": project_id, "section_id": section_id,
-                          "order": 0, "pending": True, "base_label": base.copy()},
-                )
-                self._renumber_nodes()
-                self._add_task_worker(placeholder, content, description, project_id, section_id)
+            if sec_data is not None:
+                task_dict: dict = {
+                    "type": "task", "id": None, "content": content,
+                    "project_id": project_id, "section_id": section_id,
+                    "order": 0, "pending": True, "moving": False,
+                }
+                sec_data["tasks"].append(task_dict)
+                self._rebuild_list()
+                self._add_task_worker(task_dict, content, description, project_id, section_id)
             else:
                 try:
                     task = api_add_task(content, project_id, section_id, description)
@@ -770,24 +783,20 @@ class TodoistApp(App):
         self.push_screen(AddTaskModal(project_id, section_id, location), on_dismiss)
 
     @work(thread=True)
-    def _add_task_worker(self, placeholder, content: str, description: str | None,
+    def _add_task_worker(self, task_dict: dict, content: str, description: str | None,
                           project_id: str, section_id: str | None) -> None:
         try:
             task = api_add_task(content, project_id, section_id, description)
             self.call_from_thread(
-                self._on_add_success, placeholder, task, content, description, project_id, section_id
+                self._on_add_success, task_dict, task, content, description, project_id, section_id
             )
         except Exception as e:
-            self.call_from_thread(self._on_add_error, placeholder, str(e))
+            self.call_from_thread(self._on_add_error, task_dict, str(e))
 
-    def _on_add_success(self, placeholder, task: dict, content: str,
+    def _on_add_success(self, task_dict: dict, task: dict, content: str,
                          description: str | None, project_id: str, section_id: str | None) -> None:
         task_id = task["id"]
-        try:
-            placeholder.data.update({"id": task_id, "pending": False,
-                                     "order": task.get("order", 0)})
-        except Exception:
-            pass
+        task_dict.update({"id": task_id, "pending": False, "order": task.get("order", 0)})
         self._undo_stack.append({
             "description": f"Add task: {content}",
             "undo_fn": lambda: api_delete_task(task_id),
@@ -795,40 +804,38 @@ class TodoistApp(App):
             "project_id": project_id,
         })
         self._redo_stack.clear()
-        self._renumber_nodes()
+        self._rebuild_list()
 
-    def _on_add_error(self, placeholder, error: str) -> None:
-        try:
-            placeholder.remove()
-        except Exception:
-            pass
-        self._renumber_nodes()
+    def _on_add_error(self, task_dict: dict, error: str) -> None:
+        self._remove_task_from_data(task_dict)
+        self._rebuild_list()
         self._set_status(f"Error: {error}")
 
     def _do_complete_task(self) -> None:
-        tree = self.query_one("#tree", Tree)
-        node = tree.cursor_node
-        if not node or not node.data or node.data["type"] != "task":
+        node = self._get_current_node()
+        if not node or node.get("type") != "task":
             self._set_status("Select a task to complete")
             return
-        if node.data.get("pending"):
+        if node.get("pending"):
             return
-        task_id = node.data["id"]
-        content = node.data["content"]
-        project_id = node.data["project_id"]
-        node.data["pending"] = True
-        self._renumber_nodes()
+        task_id = node["id"]
+        content = node["content"]
+        project_id = node["project_id"]
+        node["pending"] = True
+        self._rebuild_list()
         self._complete_task_worker(node, task_id, content, project_id)
 
     @work(thread=True)
-    def _complete_task_worker(self, node, task_id: str, content: str, project_id: str) -> None:
+    def _complete_task_worker(self, task_dict: dict, task_id: str,
+                               content: str, project_id: str) -> None:
         try:
             api_close_task(task_id)
-            self.call_from_thread(self._on_complete_success, node, task_id, content, project_id)
+            self.call_from_thread(self._on_complete_success, task_dict, task_id, content, project_id)
         except Exception as e:
-            self.call_from_thread(self._on_complete_error, node, content, str(e))
+            self.call_from_thread(self._on_complete_error, task_dict, content, str(e))
 
-    def _on_complete_success(self, node, task_id: str, content: str, project_id: str) -> None:
+    def _on_complete_success(self, task_dict: dict, task_id: str,
+                              content: str, project_id: str) -> None:
         self._undo_stack.append({
             "description": f"Complete task: {content}",
             "undo_fn": lambda: api_reopen_task(task_id),
@@ -836,31 +843,24 @@ class TodoistApp(App):
             "project_id": project_id,
         })
         self._redo_stack.clear()
-        try:
-            node.remove()
-        except Exception:
-            pass
-        self._renumber_nodes()
+        self._remove_task_from_data(task_dict)
+        self._rebuild_list()
 
-    def _on_complete_error(self, node, content: str, error: str) -> None:
-        try:
-            node.data["pending"] = False
-        except Exception:
-            pass
-        self._renumber_nodes()
+    def _on_complete_error(self, task_dict: dict, content: str, error: str) -> None:
+        task_dict["pending"] = False
+        self._rebuild_list()
         self._set_status(f"Error: {error}")
 
     def _do_edit_focused_task(self) -> None:
-        tree = self.query_one("#tree", Tree)
-        node = tree.cursor_node
-        if not node or not node.data or node.data.get("type") != "task":
+        node = self._get_current_node()
+        if not node or node.get("type") != "task":
             self._set_status("Select a task to edit")
             return
-        if node.data.get("pending"):
+        if node.get("pending"):
             return
-        self._open_task_detail(node, node.data)
+        self._open_task_detail(node)
 
-    def _open_task_detail(self, task_node, task_data: dict) -> None:
+    def _open_task_detail(self, task_dict: dict) -> None:
         def on_detail_dismiss(result: dict | None) -> None:
             if not result:
                 return
@@ -869,40 +869,34 @@ class TodoistApp(App):
             new_desc = result["description"]
             old_content = result["old_content"]
             old_desc = result["old_description"]
-            project_id = task_data["project_id"]
-            try:
-                task_node.data["pending"] = True
-                new_base = _clean_task_label(new_content)
-                task_node.data["base_label"] = new_base.copy()
-            except Exception:
-                pass
-            self._renumber_nodes()
+            project_id = task_dict["project_id"]
+            task_dict["pending"] = True
+            task_dict["content"] = new_content
+            self._rebuild_list()
             self._edit_task_worker(
-                task_node, task_id, new_content, new_desc, old_content, old_desc, project_id
+                task_dict, task_id, new_content, new_desc, old_content, old_desc, project_id
             )
 
-        self.push_screen(TaskDetailModal(task_data["id"], task_data["content"]), on_detail_dismiss)
+        self.push_screen(TaskDetailModal(task_dict["id"], task_dict["content"]), on_detail_dismiss)
 
     @work(thread=True)
-    def _edit_task_worker(self, node, task_id: str, new_content: str, new_desc: str | None,
-                           old_content: str, old_desc: str | None, project_id: str) -> None:
+    def _edit_task_worker(self, task_dict: dict, task_id: str, new_content: str,
+                           new_desc: str | None, old_content: str, old_desc: str | None,
+                           project_id: str) -> None:
         try:
             api_update_task(task_id, new_content, new_desc)
             self.call_from_thread(
-                self._on_edit_success, node, task_id, new_content, new_desc,
+                self._on_edit_success, task_dict, task_id, new_content, new_desc,
                 old_content, old_desc, project_id
             )
         except Exception as e:
-            self.call_from_thread(self._on_edit_error, node, old_content, str(e))
+            self.call_from_thread(self._on_edit_error, task_dict, old_content, str(e))
 
-    def _on_edit_success(self, node, task_id: str, new_content: str, new_desc: str | None,
-                          old_content: str, old_desc: str | None, project_id: str) -> None:
-        try:
-            node.data.update({"content": new_content, "pending": False})
-            node.data["base_label"] = _clean_task_label(new_content).copy()
-        except Exception:
-            pass
-        self._renumber_nodes()
+    def _on_edit_success(self, task_dict: dict, task_id: str, new_content: str,
+                          new_desc: str | None, old_content: str, old_desc: str | None,
+                          project_id: str) -> None:
+        task_dict.update({"content": new_content, "pending": False})
+        self._rebuild_list()
         self._undo_stack.append({
             "description": f"Update task: {old_content}",
             "undo_fn": lambda: api_update_task(task_id, old_content, old_desc),
@@ -911,120 +905,96 @@ class TodoistApp(App):
         })
         self._redo_stack.clear()
 
-    def _on_edit_error(self, node, old_content: str, error: str) -> None:
-        try:
-            node.data["pending"] = False
-            node.data["base_label"] = _clean_task_label(old_content).copy()
-        except Exception:
-            pass
-        self._renumber_nodes()
+    def _on_edit_error(self, task_dict: dict, old_content: str, error: str) -> None:
+        task_dict["pending"] = False
+        task_dict["content"] = old_content
+        self._rebuild_list()
         self._set_status(f"Error: {error}")
 
     # ── Move mode ─────────────────────────────────────────────────────────────
 
     def _start_move_mode(self) -> None:
-        tree = self.query_one("#tree", Tree)
-        node = tree.cursor_node
-        if not node or not node.data or node.data.get("type") != "task":
+        node = self._get_current_node()
+        if not node or node.get("type") != "task":
             self._set_status("Select a task to move")
             return
-        if node.data.get("pending"):
+        if node.get("pending"):
             return
         self._mode = "move"
-        self._move_source_node = node
-        self._move_source_data = dict(node.data)
-        node.data["moving"] = True
-        self._renumber_nodes()
+        self._move_source_data = node
+        node["moving"] = True
+        self._rebuild_list()
         self._update_mode_indicator()
         self._set_status(
-            f"Moving: {node.data['content']}  |  navigate to destination → [Enter]  [Esc] cancel"
+            f"Moving: {node['content']}  |  navigate to destination → [Enter]  [Esc] cancel"
         )
 
     def _cancel_move(self) -> None:
-        if self._move_source_node:
-            try:
-                self._move_source_node.data.pop("moving", None)
-            except Exception:
-                pass
-        self._move_source_node = None
+        if self._move_source_data:
+            self._move_source_data.pop("moving", None)
         self._move_source_data = {}
         self._enter_normal_mode()
-        self._renumber_nodes()
+        self._rebuild_list()
         self._restore_default_status()
 
-    def _execute_move(self, dest_node, dest_data: dict) -> None:
-        src_node = self._move_source_node
+    def _execute_move(self, dest_dict: dict) -> None:
         src_data = self._move_source_data
-        if not src_node:
+        if not src_data:
             self._cancel_move()
             return
-        if dest_data.get("type") != "task":
+        if dest_dict.get("type") != "task":
             self._set_status("Select a task as the destination")
             return
-        if src_data.get("id") == dest_data.get("id"):
+        if src_data.get("id") == dest_dict.get("id"):
             self._cancel_move()
             return
 
-        dest_project_id = dest_data["project_id"]
-        dest_section_id = dest_data.get("section_id")
+        dest_project_id = dest_dict["project_id"]
+        dest_section_id = dest_dict.get("section_id")
         src_task_id = src_data["id"]
         src_content = src_data["content"]
         orig_project_id = src_data["project_id"]
 
-        try:
-            src_node.data.pop("moving", None)
-        except Exception:
-            pass
-        self._move_source_node = None
+        src_data.pop("moving", None)
         self._move_source_data = {}
         self._enter_normal_mode()
 
-        src_node.data["pending"] = True
-        self._renumber_nodes()
+        src_data["pending"] = True
+        self._rebuild_list()
         self._set_status(f"Moving {src_content}...")
 
         self._move_task_worker(
-            src_node, src_task_id, src_content,
+            src_data, src_task_id, src_content,
             orig_project_id, dest_project_id, dest_section_id
         )
 
     @work(thread=True)
-    def _move_task_worker(self, src_node, task_id: str, content: str, orig_project_id: str,
-                           dest_project_id: str, dest_section_id: str | None) -> None:
+    def _move_task_worker(self, src_dict: dict, task_id: str, content: str,
+                           orig_project_id: str, dest_project_id: str,
+                           dest_section_id: str | None) -> None:
         try:
             api_move_task(task_id, dest_section_id, dest_project_id)
             self.call_from_thread(
-                self._on_move_success, src_node, orig_project_id, dest_project_id
+                self._on_move_success, src_dict, orig_project_id, dest_project_id
             )
         except Exception as e:
-            self.call_from_thread(self._on_move_error, src_node, str(e))
+            self.call_from_thread(self._on_move_error, src_dict, str(e))
 
-    def _on_move_success(self, src_node, orig_project_id: str, dest_project_id: str) -> None:
-        try:
-            src_node.data["pending"] = False
-        except Exception:
-            pass
+    def _on_move_success(self, src_dict: dict, orig_project_id: str, dest_project_id: str) -> None:
+        src_dict["pending"] = False
         self._refresh_project_by_id(dest_project_id)
         if orig_project_id != dest_project_id:
             self._refresh_project_by_id(orig_project_id)
 
-    def _on_move_error(self, src_node, error: str) -> None:
-        try:
-            src_node.data["pending"] = False
-        except Exception:
-            pass
-        self._renumber_nodes()
+    def _on_move_error(self, src_dict: dict, error: str) -> None:
+        src_dict["pending"] = False
+        self._rebuild_list()
         self._set_status(f"Move failed: {error}")
 
     # ── Refresh ───────────────────────────────────────────────────────────────
 
     def action_refresh(self) -> None:
-        tree = self.query_one("#tree", Tree)
-        expanded_ids = {
-            child.data["id"]
-            for child in tree.root.children
-            if child.data and child.data.get("type") == "project" and child.is_expanded
-        }
+        expanded_ids = {p["id"] for p in self._projects_data if p.get("expanded")}
         status = self.query_one("#status", Static)
         status.add_class("refreshing")
         self._set_status("🔄 Refreshing...")
@@ -1048,25 +1018,22 @@ class TodoistApp(App):
         if error:
             self._set_status(f"Error: {error}")
             return
-        tree = self.query_one("#tree", Tree)
-        tree.clear()
-        tree.root.expand()
-        for project in (projects or []):
-            pid = project["id"]
-            base = Text(f"📋 {project['name']}")
-            node = tree.root.add(
-                base,
-                data={"type": "project", "id": pid, "name": project["name"],
-                      "base_label": base.copy()},
-                expand=False,
-            )
+
+        new_projects: list[dict] = []
+        for p in (projects or []):
+            pid = p["id"]
+            proj_dict: dict = {
+                "type": "project", "id": pid, "name": p["name"],
+                "expanded": False, "loaded": False, "sections": [],
+            }
             if pid in project_data:
                 sections, tasks = project_data[pid]
-                self._build_tree_content(node, pid, sections, tasks)
-                node.expand()
-            else:
-                node.add_leaf(Text("  Loading...", style="dim"), data={"type": "loading"})
-        self._renumber_nodes()
+                proj_dict["expanded"] = True
+                self._populate_project(proj_dict, sections, tasks)
+            new_projects.append(proj_dict)
+
+        self._projects_data = new_projects
+        self._rebuild_list()
         self._restore_default_status()
 
     # ── Undo / Redo ───────────────────────────────────────────────────────────
@@ -1102,51 +1069,28 @@ class TodoistApp(App):
     # ── Collapse Others ───────────────────────────────────────────────────────
 
     def action_collapse_others(self) -> None:
-        tree = self.query_one("#tree", Tree)
-        node = tree.cursor_node
+        node = self._get_current_node()
         if not node:
             return
-        current = node
-        while current and current.data and current.data.get("type") != "section":
-            current = current.parent
-        if not current or not current.data or current.data.get("type") != "section":
+        cur_sec: dict | None = None
+        if node.get("type") == "section":
+            cur_sec = node
+        elif node.get("type") == "task":
+            for proj in self._projects_data:
+                for sec in proj.get("sections", []):
+                    if node in sec["tasks"]:
+                        cur_sec = sec
+                        break
+        if not cur_sec:
             self._set_status("No section selected")
             return
-        section_node = current
-        project_node = section_node.parent
-        if not project_node:
-            return
-        for child in project_node.children:
-            if child is not section_node:
-                child.collapse()
-        self._renumber_nodes()
-
-    # ── Renumber ──────────────────────────────────────────────────────────────
-
-    def _get_visible_nodes(self) -> list:
-        tree = self.query_one("#tree", Tree)
-        nodes = []
-
-        def walk(node) -> None:
-            for child in node.children:
-                data = child.data
-                if data and data.get("type") not in ("loading", "error", "empty"):
-                    nodes.append(child)
-                if child.is_expanded:
-                    walk(child)
-
-        walk(tree.root)
-        return nodes
-
-    def _renumber_nodes(self) -> None:
-        nodes = self._get_visible_nodes()
-        for i, node in enumerate(nodes, start=1):
-            base = node.data.get("base_label") if node.data else None
-            if base is None:
-                continue
-            pending = node.data.get("pending", False)
-            moving = node.data.get("moving", False)
-            node.set_label(_build_displayed_label(base, i, pending, moving))
+        project_id = cur_sec["project_id"]
+        for proj in self._projects_data:
+            if proj["id"] == project_id:
+                for sec in proj.get("sections", []):
+                    if sec is not cur_sec:
+                        sec["expanded"] = False
+        self._rebuild_list()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -1159,59 +1103,47 @@ class TodoistApp(App):
         )
 
     def _get_context(self) -> tuple[str | None, str | None, str]:
-        tree = self.query_one("#tree", Tree)
-        node = tree.cursor_node
-        if not node or not node.data:
+        node = self._get_current_node()
+        if not node:
             return None, None, ""
-        data = node.data
-        match data["type"]:
+        match node.get("type"):
             case "project":
-                return data["id"], None, data["name"]
+                return node["id"], None, node["name"]
             case "section":
-                return data["project_id"], data["id"], data["name"] or "No Section"
+                return node["project_id"], node.get("id"), node.get("name") or "No Section"
             case "task":
-                return data["project_id"], data.get("section_id"), ""
+                return node["project_id"], node.get("section_id"), ""
             case _:
                 return None, None, ""
 
-    def _find_section_node(self, project_id: str, section_id: str | None):
-        tree = self.query_one("#tree", Tree)
-        for proj_node in tree.root.children:
-            if not (proj_node.data and proj_node.data.get("id") == project_id):
+    def _find_section_in_data(self, project_id: str, section_id: str | None) -> dict | None:
+        for proj in self._projects_data:
+            if proj["id"] != project_id:
                 continue
-            for sec_node in proj_node.children:
-                if sec_node.data and sec_node.data.get("type") == "section":
-                    node_sid = sec_node.data.get("id")
-                    if str(node_sid or "") == str(section_id or ""):
-                        return sec_node
+            for sec in proj.get("sections", []):
+                if str(sec.get("id") or "") == str(section_id or ""):
+                    return sec
         return None
 
-    def _get_project_node(self):
-        tree = self.query_one("#tree", Tree)
-        node = tree.cursor_node
-        if not node:
-            return None
-        current = node
-        while current and current.data and current.data.get("type") != "project":
-            current = current.parent
-        if current and current.data and current.data.get("type") == "project":
-            return current
-        return None
-
-    def _force_reload(self, project_node) -> None:
-        project_node.remove_children()
-        project_node.add_leaf(
-            Text("  Loading...", style="dim"),
-            data={"type": "loading"},
-        )
-        self._load_project_content(project_node, project_node.data["id"])
+    def _remove_task_from_data(self, task_dict: dict) -> None:
+        for proj in self._projects_data:
+            for sec in proj.get("sections", []):
+                if task_dict in sec["tasks"]:
+                    sec["tasks"].remove(task_dict)
+                    return
 
     def _refresh_project_by_id(self, project_id: str) -> None:
-        tree = self.query_one("#tree", Tree)
-        for child in tree.root.children:
-            if child.data and child.data.get("id") == project_id:
-                self._force_reload(child)
+        for proj in self._projects_data:
+            if proj["id"] == project_id:
+                if proj.get("expanded"):
+                    proj["loaded"] = False
+                    proj["sections"] = []
+                    self._rebuild_list()
+                    self._load_project_content(proj)
+                else:
+                    self._rebuild_list()
                 return
+        self._rebuild_list()
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
