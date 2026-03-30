@@ -1,6 +1,6 @@
 # TOdash (Todoist TUI Tool)
 
-<img width="633" height="482" alt="image" src="https://github.com/user-attachments/assets/c58ea4dd-8ce3-4ac8-8875-42df9aebc06c" />
+<img width="811" height="328" alt="image" src="https://github.com/user-attachments/assets/9b94a1e5-05df-44b0-9252-98e5d7a4db27" />
 
 ## Overview
 
