@@ -1,8 +1,10 @@
-# Todoist CLI Tool
+# Todash (Todoist TUI Tool)
 
 <img width="712" height="507" alt="image" src="https://github.com/user-attachments/assets/e6b5a45d-3661-4ccd-9421-aa6cc507b1fd" />
 
 ## Overview
+
+Projectの名前をTodoist-CLIからTodashに変えました。
 `todo` コマンドで起動するターミナル UI (TUI) で Todoist を操作するツールです。
 プロジェクト → セクション → タスクをリスト形式で表示し、**行番号を一番左端**に常時表示します。キーボードだけで快適に管理できます。
 

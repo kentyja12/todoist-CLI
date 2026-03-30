@@ -1,10 +1,10 @@
-# Todoist CLI Tool
+# TOdash (Todoist TUI Tool)
 
 <img width="633" height="482" alt="image" src="https://github.com/user-attachments/assets/c58ea4dd-8ce3-4ac8-8875-42df9aebc06c" />
 
-
 ## Overview
 
+I renamed the project from Todoist-CLI to Todash.
 This tool lets you manage Todoist from your terminal using a TUI (Terminal User Interface).
 It displays your projects, sections, and tasks in a list view with line numbers on the far left, so you can handle everything with just the keyboard.
 
