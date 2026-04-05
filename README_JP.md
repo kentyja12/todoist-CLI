@@ -34,18 +34,24 @@ git clone https://github.com/kentyja12/todoist-CLI.git
 cd todoist-CLI
 ```
 
-### 2. 仮想環境を作成してインストール
-```sh
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
+### 2. pipx でインストール
 
-pip install -e .
+[pipx](https://pipx.pypa.io) を使うと、仮想環境を意識せずに `todo` コマンドをグローバルに登録できます。
+
+```sh
+# pipx のインストール（初回のみ）
+pip install pipx
+pipx ensurepath   # 終了後ターミナルを再起動
+
+# todash をインストール
+pipx install .
 ```
 
-`todo` コマンドは pip が自動的に登録します。
+アップデート時：
+
+```sh
+pipx reinstall todash
+```
 
 ### 3. 初回セットアップ
 

@@ -36,19 +36,24 @@ git clone https://github.com/kentyja12/todoist-CLI.git
 cd todoist-CLI
 ```
 
-### 2. Create a virtual environment and install
+### 2. Install with pipx
+
+[pipx](https://pipx.pypa.io) installs the `todo` command globally without requiring you to manage a virtual environment.
 
 ```sh
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
+# Install pipx (first time only)
+pip install pipx
+pipx ensurepath   # restart your terminal after this
 
-pip install -e .
+# Install todash
+pipx install .
 ```
 
-The `todo` command is registered automatically by pip.
+To update later:
+
+```sh
+pipx reinstall todash
+```
 
 ### 3. First-run setup
 
