@@ -34,47 +34,28 @@ git clone https://github.com/kentyja12/todoist-CLI.git
 cd todoist-CLI
 ```
 
-### 2. 仮想環境を作成して依存パッケージをインストール
+### 2. 仮想環境を作成してインストール
 ```sh
-python -m venv .env
+python -m venv .venv
 # Windows
-.env\Scripts\activate
+.venv\Scripts\activate
 # macOS / Linux
-source .env/bin/activate
+source .venv/bin/activate
 
-pip install -r requirements.txt
+pip install -e .
 ```
 
-### 3. `.env` ファイルを作成
-```
-TODOIST_TOKEN=your_todoist_api_token
-TTY=300
-```
+`todo` コマンドは pip が自動的に登録します。
 
-- `TODOIST_TOKEN`: Todoist の API トークン（必須）
-- `TTY`: 自動更新間隔（秒）。省略時は 3600 秒
+### 3. 初回セットアップ
 
----
+`todo` を初めて起動するとセットアップウィザードが表示され、API トークンの入力を求められます。
+設定は OS に応じた場所へ自動保存されます：
 
-## `todo` コマンドの登録
+- **Windows**: `%APPDATA%\todash\.env`
+- **macOS / Linux**: `~/.config/todash/.env`
 
-### Windows (PowerShell)
-
-`todo.bat` を作成してパスの通ったフォルダに置きます。
-
-```bat
-@echo off
-C:\path\to\.env\Scripts\python.exe C:\path\to\todoist-CLI\todoist-cli.py %*
-```
-
-### macOS / Linux
-
-```sh
-#!/bin/bash
-/path/to/.env/bin/python /path/to/todoist-CLI/todoist-cli.py "$@"
-```
-
-`~/bin/todo` 等に置いて `chmod +x` を実行してください。
+トークンや自動更新間隔（`TTY`）はこのファイルを直接編集して変更できます。
 
 ---
 

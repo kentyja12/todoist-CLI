@@ -36,49 +36,29 @@ git clone https://github.com/kentyja12/todoist-CLI.git
 cd todoist-CLI
 ```
 
-### 2. Create a virtual environment and install dependencies
+### 2. Create a virtual environment and install
 
 ```sh
-python -m venv .env
+python -m venv .venv
 # Windows
-.env\Scripts\activate
+.venv\Scripts\activate
 # macOS / Linux
-source .env/bin/activate
+source .venv/bin/activate
 
-pip install -r requirements.txt
+pip install -e .
 ```
 
-### 3. Create a `.env` file
+The `todo` command is registered automatically by pip.
 
-```
-TODOIST_TOKEN=your_todoist_api_token
-TTY=300
-```
+### 3. First-run setup
 
-- `TODOIST_TOKEN`: Your Todoist API token (required)
-- `TTY`: Auto-update interval in seconds. Defaults to 3600 if not set
+Run `todo` for the first time and the setup wizard will prompt you for your API token.
+The config is saved to the OS-appropriate location automatically:
 
----
+- **Windows**: `%APPDATA%\todash\.env`
+- **macOS / Linux**: `~/.config/todash/.env`
 
-## Registering the `todo` Command
-
-### Windows (PowerShell)
-
-Create a `todo.bat` file and place it in a folder that is in your PATH.
-
-```bat
-@echo off
-C:\path\to\.env\Scripts\python.exe C:\path\to\todoist-CLI\todoist-cli.py %*
-```
-
-### macOS / Linux
-
-```sh
-#!/bin/bash
-/path/to/.env/bin/python /path/to/todoist-CLI/todoist-cli.py "$@"
-```
-
-Place this file at `~/bin/todo` or a similar location, then run `chmod +x` to make it executable.
+You can edit this file later to change your token or the auto-refresh interval (`TTY`).
 
 ---
 

@@ -1,48 +1,23 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import time
-from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, LoadingIndicator, Static
-from textual.worker import get_current_worker
+from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, Static
 
-load_dotenv()
-
-TOKEN = os.getenv("TODOIST_TOKEN")
+TOKEN: str | None = None
 BASE_URL = "https://api.todoist.com/api/v1"
-REPO_PATH = Path(__file__).resolve().parent
-LAST_UPDATE_FILE = REPO_PATH / ".last_update"
 
 try:
     TTY = int(os.getenv("TTY", "3600"))
 except ValueError:
     TTY = 3600
-
-
-# ── Update Check ──────────────────────────────────────────────────────────────
-
-def _needs_update() -> bool:
-    if not LAST_UPDATE_FILE.exists():
-        return True
-    try:
-        last = float(LAST_UPDATE_FILE.read_text().strip())
-        return (time.time() - last) >= TTY
-    except ValueError:
-        return True
-
-
-def _write_last_update() -> None:
-    LAST_UPDATE_FILE.write_text(str(time.time()))
 
 
 # ── API ───────────────────────────────────────────────────────────────────────
@@ -163,89 +138,6 @@ def _render_row(node: dict, line_num: int) -> Text:
     else:
         return Text("")
     return Text.assemble(num, c)
-
-
-# ── Update Modal ──────────────────────────────────────────────────────────────
-
-class UpdateModal(ModalScreen):
-    BINDINGS = [
-        Binding("escape", "cancel_update", "Cancel", show=True),
-        Binding("q", "quit_app", "Quit", show=True),
-    ]
-
-    DEFAULT_CSS = """
-    UpdateModal { align: center middle; }
-    #update-box {
-        width: 56; height: auto; background: $surface;
-        border: thick $warning; padding: 1 2;
-    }
-    #update-title { text-align: center; text-style: bold; margin-bottom: 1; color: $warning; }
-    LoadingIndicator { height: 3; color: $warning; }
-    #update-status { text-align: center; color: $text-muted; height: 1; }
-    #update-hint { text-align: center; color: $text-muted; margin-top: 1; }
-    """
-
-    def compose(self) -> ComposeResult:
-        yield Container(
-            Label("🔄  Updating repository...", id="update-title"),
-            LoadingIndicator(),
-            Label("", id="update-status"),
-            Label("[Esc] Cancel    [q] Quit", id="update-hint"),
-            id="update-box",
-        )
-
-    def on_mount(self) -> None:
-        self._run_git_pull()
-
-    @work(thread=True, exclusive=True)
-    def _run_git_pull(self) -> None:
-        worker = get_current_worker()
-        try:
-            result = subprocess.run(
-                ["git", "-C", str(REPO_PATH), "pull"],
-                capture_output=True, text=True, timeout=30,
-            )
-            if worker.is_cancelled:
-                return
-            if result.returncode == 0:
-                msg = result.stdout.strip() or "Already up to date"
-                self.app.call_from_thread(self._on_done, True, msg)
-            else:
-                err = result.stderr.strip() or "Unknown error"
-                self.app.call_from_thread(self._on_done, False, err)
-        except subprocess.TimeoutExpired:
-            if not worker.is_cancelled:
-                self.app.call_from_thread(self._on_done, False, "Timeout (30s)")
-        except Exception as e:
-            if not worker.is_cancelled:
-                self.app.call_from_thread(self._on_done, False, str(e))
-
-    def _on_done(self, success: bool, message: str) -> None:
-        _write_last_update()
-        self.query_one("#update-status", Label).update(
-            f"✓  {message}" if success else f"✗  {message}"
-        )
-        self.query_one("#update-hint", Label).update("[Esc] Continue    [q] Quit")
-        self.query_one(LoadingIndicator).display = False
-        _result = success
-
-        def _do_dismiss() -> None:
-            self.dismiss(_result)
-
-        self.set_timer(1.5, _do_dismiss)
-
-    def action_cancel_update(self) -> None:
-        self.workers.cancel_all()
-        _write_last_update()
-
-        def _do_dismiss() -> None:
-            self.dismiss(None)
-
-        self.call_after_refresh(_do_dismiss)
-
-    def action_quit_app(self) -> None:
-        self.workers.cancel_all()
-        self.app.exit()
 
 
 # ── Add Task Modal ────────────────────────────────────────────────────────────
@@ -371,7 +263,7 @@ class TaskDetailModal(ModalScreen):
 class TodoistApp(App):
     """Todoist TUI"""
 
-    TITLE = "Todoist"
+    TITLE = "Todash"
 
     CSS = """
     ListView {
@@ -416,9 +308,8 @@ class TodoistApp(App):
         Binding("ctrl+w", "collapse_others", "Collapse Others", show=False),
     ]
 
-    def __init__(self, needs_update: bool = False) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.needs_update = needs_update
         self._undo_stack: list[dict] = []
         self._redo_stack: list[dict] = []
         self._mode: str = "normal"
@@ -435,12 +326,6 @@ class TodoistApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        if self.needs_update:
-            self.push_screen(UpdateModal(), self._after_update)
-        else:
-            self._load_projects()
-
-    def _after_update(self, _result) -> None:
         self._load_projects()
 
     def _lv(self) -> ListView:
@@ -1149,5 +1034,6 @@ class TodoistApp(App):
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
 def run_tui() -> None:
-    needs_update = _needs_update()
-    TodoistApp(needs_update=needs_update).run()
+    global TOKEN
+    TOKEN = os.getenv("TODOIST_TOKEN")
+    TodoistApp().run()
