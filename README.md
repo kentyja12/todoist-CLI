@@ -19,12 +19,11 @@ It displays your projects, sections, and tasks in a list view with line numbers 
 - Vim-like mode system (Normal / Command / Colon / Move)
 - Line number jump: `Esc → :<N>g → Enter`
 - Task move mode: `Esc → :mv → Enter`
-- Auto-update check on startup (interval set by `TTY` in `.env`)
 - Optimistic UI — pending operations shown dimmed in real time
 
 ## Requirements
 
-- Python 3.10 or higher
+- [Rust toolchain](https://rustup.rs) (stable)
 - [Todoist API token](https://developer.todoist.com/appconsole)
 
 ## Installation
@@ -36,23 +35,16 @@ git clone https://github.com/kentyja12/todoist-CLI.git
 cd todoist-CLI
 ```
 
-### 2. Install with pipx
-
-[pipx](https://pipx.pypa.io) installs the `todo` command globally without requiring you to manage a virtual environment.
+### 2. Install with cargo
 
 ```sh
-# Install pipx (first time only)
-pip install pipx
-pipx ensurepath   # restart your terminal after this
-
-# Install todash
-pipx install .
+cargo install --path .
 ```
 
 To update later:
 
 ```sh
-pipx reinstall todash
+cargo install --path .
 ```
 
 ### 3. First-run setup
