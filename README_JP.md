@@ -19,11 +19,10 @@ Projectの名前をTodoist-CLIからTodashに変えました。
 - vim ライクなモードシステム（Normal / Command / Colon / Move）
 - 行番号ジャンプ：`Esc → :<N>g → Enter`
 - タスク移動モード：`Esc → :mv → Enter`
-- 起動時に自動更新チェック（`.env` の `TTY` 秒間隔）
 - オプティミスティック UI（処理中のタスクをリアルタイムで薄く表示）
 
 ## Requirements
-- Python 3.10 以上
+- [Rust ツールチェーン](https://rustup.rs)（stable）
 - [Todoist API トークン](https://developer.todoist.com/appconsole)
 
 ## Installation
@@ -34,23 +33,16 @@ git clone https://github.com/kentyja12/todoist-CLI.git
 cd todoist-CLI
 ```
 
-### 2. pipx でインストール
-
-[pipx](https://pipx.pypa.io) を使うと、仮想環境を意識せずに `todo` コマンドをグローバルに登録できます。
+### 2. cargo でインストール
 
 ```sh
-# pipx のインストール（初回のみ）
-pip install pipx
-pipx ensurepath   # 終了後ターミナルを再起動
-
-# todash をインストール
-pipx install .
+cargo install --path .
 ```
 
 アップデート時：
 
 ```sh
-pipx reinstall todash
+cargo install --path .
 ```
 
 ### 3. 初回セットアップ
